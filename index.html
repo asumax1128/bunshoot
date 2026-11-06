@@ -103,6 +103,10 @@
   #rankSubmit { padding: 9px 14px; border-radius: 10px; border: none; background: #ffb02e; color: #5b3600; font-weight: 800; font-size: 15px; font-family: inherit; cursor: pointer; }
   #rankStatus { font-size: 13px; min-height: 18px; margin-top: 6px; color: #ffd94d; }
   #rankList { margin: 6px 0 0; padding: 0; list-style: none; max-height: 220px; overflow: auto; }
+  .rankPanelBox { margin-top: 14px; background: #171a42; border-radius: 10px; padding: 10px 12px; color: #fff; text-align: left; }
+  #rankListTitle { margin: 6px 0 0; padding: 0; list-style: none; max-height: 46vh; overflow: auto; }
+  #rankListTitle li { display: flex; justify-content: space-between; gap: 8px; padding: 5px 2px; border-top: 1px solid rgba(255,255,255,.14); font-size: 14px; flex-wrap: wrap; }
+  #rankStatusTitle { font-size: 13px; min-height: 18px; margin-top: 6px; color: #ffd94d; }
   #rankList li { display: flex; justify-content: space-between; gap: 8px; padding: 5px 2px; border-top: 1px solid rgba(255,255,255,.14); font-size: 14px; }
   #hpBarWrap { flex: 1; height: 24px; background: rgba(10,14,40,.7); border: 1px solid rgba(110,200,255,.25); border-radius: 4px; overflow: hidden; }
   #hpLabel { font-size: 20px; font-weight: 800; min-width: 44px; text-align: right; }
@@ -133,6 +137,7 @@
     </p>
     <button class="bigbtn" id="startBtn">▶ ゲームスタート</button>
     <button class="howtoBtn" id="howtoBtn">📖 あそびかた（チュートリアル）</button>
+    <button class="howtoBtn" id="rankBtnTitle">🏆 ランキング</button>
     <div style="display:flex; gap:8px; justify-content:center; margin-top:14px;">
       <button class="pill" id="sfxBtn" style="padding:6px 14px; cursor:pointer;">🔊 音 ON</button>
       <button class="pill" id="bgmBtn" style="padding:6px 14px; cursor:pointer;">🎵 BGM ON</button>
@@ -214,6 +219,19 @@
         <button class="miniBtn" id="tutPrev" disabled>← もどる</button>
         <button class="bigbtn" id="tutNext">つぎへ →</button>
       </div>
+    </div>
+  </div>
+
+  <div id="rankOverlay" class="overlay hidden">
+    <div class="card tutCard">
+      <button class="tutClose" id="rankClose">✕</button>
+      <h2 class="tutTitle">RANKING</h2>
+      <div class="rankPanelBox">
+        <div class="rankHead">🏆 ランキング</div>
+        <div id="rankStatusTitle"></div>
+        <ol id="rankListTitle"></ol>
+      </div>
+      <p class="note" style="margin-top:10px;">登録は、ゲーム終了後のリザルト画面からできます。</p>
     </div>
   </div>
 
@@ -831,13 +849,15 @@ function dedupeShooterRows(rows) {
   return Object.keys(best).map(function (k) { return best[k]; }).sort(function (a, b) { return (b.score - a.score) || (a.time - b.time); }).slice(0, 30);
 }
 function renderRanking(rows) {
-  el("rankList").innerHTML = dedupeShooterRows(rows).map(function (r, i) {
+  var html = dedupeShooterRows(rows).map(function (r, i) {
     return "<li><span>" + (i + 1) + "位 " + escapeHtml(r.name) + (r.cleared ? " 🎉" + fmtTime(r.time) : "") + "</span><span>" + r.score + "点</span>" +
       "<span class=\"rankSub\">撃破 " + r.kills + " ／ 最大コンボ " + r.maxCombo + " ／ 最大チェーン " + r.maxChain + " ／ バースト " + r.bursts + " ／ 発射 " + r.shots + "</span></li>";
   }).join("");
+  el("rankList").innerHTML = html;
+  el("rankListTitle").innerHTML = html;
 }
 function loadRanking() {
-  if (!RANK_URL) { el("rankStatus").textContent = "ランキングは準備中です"; return; }
+  if (!RANK_URL) { el("rankStatus").textContent = "ランキングは準備中です"; el("rankStatusTitle").textContent = "ランキングは準備中です"; return; }
   fetch(RANK_URL).then(function (r) { return r.json(); }).then(function (rows) { renderRanking(rows || []); }).catch(function () {});
 }
 function submitScore() {
@@ -1246,6 +1266,14 @@ el("howtoBtn").addEventListener("click", function () {
 el("howtoClose").addEventListener("click", function () { el("howtoOverlay").classList.add("hidden"); });
 el("howtoOverlay").addEventListener("click", function (e) {
   if (e.target === el("howtoOverlay")) el("howtoOverlay").classList.add("hidden");
+});
+el("rankBtnTitle").addEventListener("click", function () {
+  el("rankOverlay").classList.remove("hidden");
+  loadRanking();
+});
+el("rankClose").addEventListener("click", function () { el("rankOverlay").classList.add("hidden"); });
+el("rankOverlay").addEventListener("click", function (e) {
+  if (e.target === el("rankOverlay")) el("rankOverlay").classList.add("hidden");
 });
 el("tutPrev").addEventListener("click", function () { showTut(tutIdx - 1); });
 el("tutNext").addEventListener("click", function () {
