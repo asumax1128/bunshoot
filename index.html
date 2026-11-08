@@ -294,6 +294,7 @@
 <script>
 "use strict";
 // ===== CORE_START =====
+var BUNSHOOT_VERSION = "2.5";
 var W = 336, H = 580;
 function gcd(a, b) { return b === 0 ? a : gcd(b, a % b); }
 function reducePair(n, d) { var g = gcd(n, d); return { n: n / g, d: d / g }; }
@@ -431,12 +432,23 @@ function el(id) { return document.getElementById(id); }
 function fracHTML(f) { return "<span class='frac'><span class='fn'>" + f.n + "</span><span class='fd'>" + f.d + "</span></span>"; }
 
 var audioCtx = null;
+// suspended / interrupted（iOS）など running 以外なら resume を試みる。closed は作り直す。
+function resumeAudio() {
+  if (!audioCtx) return;
+  try {
+    if (audioCtx.state !== "running" && audioCtx.state !== "closed" && audioCtx.resume) {
+      var p = audioCtx.resume();
+      if (p && typeof p.catch === "function") p.catch(function () { /* ignore */ });
+    }
+  } catch (e) { /* ignore */ }
+}
 function ac() {
   try {
     var AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return null;
+    if (audioCtx && audioCtx.state === "closed") audioCtx = null;
     if (!audioCtx) audioCtx = new AC();
-    if (audioCtx.state === "suspended") audioCtx.resume();
+    resumeAudio();
     return audioCtx;
   } catch (e) { return null; }
 }
@@ -490,18 +502,44 @@ function bgmTick() {
 }
 function startBGM() { if (bgmTimer) return; bgmStep = 0; bgmTimer = setInterval(bgmTick, 205); }
 function stopBGM() { if (bgmTimer) { clearInterval(bgmTimer); bgmTimer = null; } }
-if (typeof document !== "undefined" && document.addEventListener) document.addEventListener("visibilitychange", function () { if (document.hidden) stopBGM(); else if (S && S.running && !S.over && loadSettings().bgm) startBGM(); });
+// 記録用の時計（可視状態での実時間）。描画・物理の刻み（S.t：dt 上限つき）とは別に持つ。
+function clockNow() {
+  try { if (typeof performance !== "undefined" && performance && typeof performance.now === "function") return performance.now(); } catch (e) { /* ignore */ }
+  return Date.now();
+}
+function isPageHidden() { return typeof document !== "undefined" && !!document.hidden; }
+function makePlayClock() { return { acc: 0, since: isPageHidden() ? null : clockNow() }; }
+function clockPause(c) { if (c && c.since !== null) { c.acc += Math.max(0, clockNow() - c.since); c.since = null; } }
+function clockResume(c) { if (c && c.since === null) c.since = clockNow(); }
+function clockSeconds(c) { if (!c) return 0; return (c.acc + (c.since !== null ? Math.max(0, clockNow() - c.since) : 0)) / 1000; }
+function onVisibilityChange() {
+  if (isPageHidden()) {
+    stopBGM();
+    if (S && S.running && !S.over) clockPause(S.clock);
+    return;
+  }
+  resumeAudio();
+  if (S && S.running && !S.over) {
+    clockResume(S.clock);
+    if (bgmOn) startBGM();
+  }
+}
+if (typeof document !== "undefined" && document.addEventListener) document.addEventListener("visibilitychange", onVisibilityChange);
 
+var gameSeq = 0;
 function newGame() {
   ac();
   pendingShot = -1;
-  rankSent = false;
+  resetRankContext();
+  gameSeq++;
   if (typeof window !== "undefined" && window.scrollTo) window.scrollTo(0, 0);
   S = {
+    gameId: gameSeq,
     running: true, over: false, t: 0, score: 0, hp: 100, combo: 0, maxCombo: 0, special: 0,
     kills: 0, bursts: 0, shotsFired: 0, stage: 1, stageKills: 0, phase: "normal", bossAtkT: 0, stageT: 0, chain: 0, chainT: 0, maxChain: 0, cleared: false, clearTime: 0,
     ship: { x: W / 2 }, bullets: [], enemies: [], parts: [], pops: [],
-    spawnT: 0.4, fireCd: 0, shake: 0, keys: {}
+    spawnT: 0.4, fireCd: 0, shake: 0, keys: {},
+    clock: makePlayClock(), result: null
   };
   el("startScreen").classList.add("hidden");
   el("finalScreen").classList.add("hidden");
@@ -536,7 +574,7 @@ function specialFire() {
   if (S.special < 100) return;
   var targets = S.enemies.filter(function (e) { return !e.boss && e.y > 30; }).sort(function (a, b) { return b.y - a.y; }).slice(0, 3);
   var bossE = null;
-  for (var bx = 0; bx < S.enemies.length; bx++) if (S.enemies[bx].boss) bossE = S.enemies[bx];
+  for (var bx = 0; bx < S.enemies.length; bx++) if (S.enemies[bx].boss && S.enemies[bx].y > 30) bossE = S.enemies[bx];
   if (targets.length === 0 && !bossE) return;
   S.special = 0;
   S.shake = 0.35;
@@ -667,6 +705,7 @@ function step(dt) {
   // 当たり判定：弾ごとに「一番下にいる敵」へ当てる
   var deadB = {}, deadE = {};
   S.bullets.forEach(function (b, bi) {
+    if (S.over) return; // 終了確定後はこのフレームの残りの弾を処理しない
     var best = -1, bestY = -1e9;
     S.enemies.forEach(function (e, ei) {
       if (deadE[ei]) return;
@@ -750,7 +789,7 @@ function step(dt) {
   }
   var kept = [];
   S.enemies.forEach(function (e) {
-    if (e.y > H + 30) {
+    if (!S.over && e.y > H + 30) {
       var dmg = e.boss ? 40 : 20;
       S.hp -= dmg;
       S.combo = 0;
@@ -790,115 +829,211 @@ function fmtTime(sec) {
   sec = Math.max(0, Math.floor(sec));
   return Math.floor(sec / 60) + ":" + String(sec % 60).padStart(2, "0");
 }
-function fillResultStats(prevBest) {
-  el("stKills").textContent = S.kills;
-  el("stCombo").textContent = S.maxCombo;
-  el("stChain").textContent = S.maxChain;
-  el("stBursts").textContent = S.bursts;
-  el("stShots").textContent = S.shotsFired;
-  el("stStage").textContent = S.cleared ? "CLEAR" : "STAGE " + S.stage;
-  el("clearChip").classList.toggle("hidden", !S.cleared);
-  if (S.cleared) el("clearTimeLabel").textContent = fmtTime(S.clearTime);
-  el("recChip").classList.toggle("hidden", !(prevBest > 0 && S.score > prevBest));
-  el("finalTitle").style.color = S.cleared ? "#ffd94d" : "#ff8fab";
+function fillResultStats(R) {
+  el("stKills").textContent = R.kills;
+  el("stCombo").textContent = R.maxCombo;
+  el("stChain").textContent = R.maxChain;
+  el("stBursts").textContent = R.bursts;
+  el("stShots").textContent = R.shots;
+  el("stStage").textContent = R.cleared ? "CLEAR" : "STAGE " + R.stage;
+  el("clearChip").classList.toggle("hidden", !R.cleared);
+  if (R.cleared) el("clearTimeLabel").textContent = fmtTime(R.time);
+  el("recChip").classList.toggle("hidden", !(R.prevBest > 0 && R.newBest));
+  el("finalTitle").style.color = R.cleared ? "#ffd94d" : "#ff8fab";
 }
-function gameClear() {
-  if (S.over) return;
+// 端末ベスト：有限の非負数でなければ 0 扱い（破損値で固まらない）
+var BEST_KEY = "equalshooter_best";
+function readBest() {
+  var raw = null;
+  try { raw = localStorage.getItem(BEST_KEY); } catch (e) { return 0; }
+  if (raw === null || raw === undefined) return 0;
+  var v = Number(String(raw).trim());
+  if (String(raw).trim() === "" || !isFinite(v) || v < 0) return 0;
+  return Math.floor(v);
+}
+function writeBest(v) {
+  try { localStorage.setItem(BEST_KEY, String(v)); return true; } catch (e) { return false; }
+}
+// 最終成績はここで一度だけ確定する。結果表示・端末ベスト・ランキング送信はすべて S.result を使う。
+// 同一フレームの優先順位：当たり判定（クリア）→ 漏れ（ゲームオーバー）の順に処理し、先に確定した方が勝つ。
+// クリアが確定したフレームでは、以後の弾・漏れ・必殺は一切処理しない（＝クリア優先）。
+function finishGame(kind) {
+  if (!S || S.over) return null;
+  var cleared = kind === "clear";
   S.over = true;
-  S.cleared = true;
-  S.clearTime = S.t;
   S.running = false;
+  S.cleared = cleared;
+  if (S.hp < 0) S.hp = 0;
+  clockPause(S.clock);
+  S.clearTime = cleared ? clockSeconds(S.clock) : 0;
+  var prevBest = readBest();
+  var R = {
+    gameId: S.gameId,
+    score: S.score, cleared: cleared, time: cleared ? Math.round(S.clearTime) : 0,
+    kills: S.kills, maxCombo: S.maxCombo, maxChain: S.maxChain, bursts: S.bursts, shots: S.shotsFired,
+    stage: S.stage, hp: S.hp, prevBest: prevBest, newBest: S.score > prevBest
+  };
+  if (Object.freeze) Object.freeze(R);
+  S.result = R;
+  var best = prevBest;
+  if (R.newBest) { best = R.score; writeBest(best); }
   stopBGM();
-  sfxClear();
+  if (cleared) sfxClear(); else sfxOver();
   el("gameScreen").classList.add("hidden");
   el("finalScreen").classList.remove("hidden");
-  el("finalTitle").textContent = "GAME CLEAR";
-  el("finalScore").textContent = S.score;
-  var best = 0, prevBest = 0;
-  try {
-    prevBest = parseInt(localStorage.getItem("equalshooter_best") || "0", 10);
-    best = prevBest;
-    if (S.score > best) { best = S.score; localStorage.setItem("equalshooter_best", String(best)); }
-  } catch (e) { best = S.score; }
+  el("finalTitle").textContent = cleared ? "GAME CLEAR" : "GAME OVER";
+  el("finalScore").textContent = R.score;
   el("bestLabel").textContent = "ベストスコア：" + best + " 点（この端末のみ）";
-  fillResultStats(prevBest);
-  setupRanking();
+  fillResultStats(R);
+  setupRanking(R);
+  return R;
 }
+function gameClear() { return finishGame("clear"); }
 var RANK_URL = "https://script.google.com/macros/s/AKfycbyb2NepY8ECbMq1IOn1Wu1OoqnfgQFA5SGNf6Z79LtO6my3Xi4X-KOxtf0BM7q7_cXXJw/exec";
-var rankSent = false;
-function escapeHtml(s) { return String(s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
-function dedupeShooterRows(rows) {
-  var best = {};
-  (rows || []).forEach(function (r) {
-    var name = String(r.name || "").trim();
-    if (!name) return;
-    var score = parseInt(r.score, 10) || 0;
-    var cleared = parseInt(r.cleared, 10) === 1;
-    var time = cleared ? (parseFloat(r.time) || 999999) : 999999;
-    var row = {
-      name: name, score: score, cleared: cleared, time: time,
-      kills: parseInt(r.kills, 10) || 0,
-      maxCombo: parseInt(r.maxCombo, 10) || 0,
-      maxChain: parseInt(r.maxChain, 10) || 0,
-      bursts: parseInt(r.bursts, 10) || 0,
-      shots: parseInt(r.shots, 10) || 0
-    };
-    var cur = best[name];
-    if (!cur || score > cur.score || (score === cur.score && time < cur.time)) best[name] = row;
+var RANK_TIMEOUT_MS = 9000;
+var NAME_MAX = 10;
+// ゲーム単位のランキング文脈。前のゲームの応答・タイマーは、自分の文脈が現在のものでなければ何も書き換えない。
+var rankCtx = null;
+var rankLoadSeq = 0;
+function resetRankContext() {
+  if (rankCtx && rankCtx.autoTimer) clearTimeout(rankCtx.autoTimer);
+  if (rankCtx) rankCtx.autoTimer = null;
+  rankCtx = null;
+}
+function setRankStatus(ctx, text) { if (ctx && ctx === rankCtx) el("rankStatus").textContent = text; }
+function setSubmitDisabled(ctx, v) { if (ctx && ctx === rankCtx) { var b = el("rankSubmit"); if (b) b.disabled = !!v; } }
+// HTTP 状態と JSON を確認し、タイムアウト（AbortController があれば中断）つきで取得する
+function fetchJson(url, opts, ms) {
+  opts = opts || {};
+  var ctl = null;
+  try { if (typeof AbortController === "function") ctl = new AbortController(); } catch (e) { ctl = null; }
+  if (ctl) opts.signal = ctl.signal;
+  return new Promise(function (resolve, reject) {
+    var done = false;
+    var timer = setTimeout(function () {
+      if (done) return;
+      done = true;
+      try { if (ctl) ctl.abort(); } catch (e) { /* ignore */ }
+      reject(new Error("timeout"));
+    }, ms);
+    function fin(fn, v) { if (done) return; done = true; clearTimeout(timer); fn(v); }
+    var p;
+    try { p = fetch(url, opts); } catch (e) { fin(reject, e); return; }
+    Promise.resolve(p).then(function (r) {
+      if (!r || !r.ok) throw new Error("http " + (r ? r.status : "?"));
+      return r.json();
+    }).then(function (data) { fin(resolve, data); }, function (err) { fin(reject, err); });
   });
-  return Object.keys(best).map(function (k) { return best[k]; }).sort(function (a, b) { return (b.score - a.score) || (a.time - b.time); }).slice(0, 30);
+}
+function escapeHtml(s) { return String(s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
+// 有限の非負数を整数に。不正なら null
+function toNonNegInt(v) {
+  if (typeof v === "string") { if (v.trim() === "") return null; v = Number(v); }
+  if (typeof v !== "number" || !isFinite(v) || v < 0) return null;
+  return Math.floor(v);
+}
+// 応答の1行を検証。不正な行は null（その行だけ読み飛ばす）
+function normalizeRankRow(r) {
+  try {
+    if (!r || typeof r !== "object") return null;
+    if (typeof r.name !== "string" && typeof r.name !== "number") return null;
+    var name = String(r.name).trim();
+    if (!name) return null;
+    var score = toNonNegInt(r.score);
+    if (score === null) return null;
+    var cleared = r.cleared === 1 || r.cleared === "1" || r.cleared === true;
+    var t = cleared ? toNonNegInt(r.time) : null;
+    function stat(v) { var x = toNonNegInt(v); return x === null ? 0 : x; }
+    return {
+      name: name, score: score, cleared: cleared, time: t,
+      kills: stat(r.kills), maxCombo: stat(r.maxCombo), maxChain: stat(r.maxChain), bursts: stat(r.bursts), shots: stat(r.shots)
+    };
+  } catch (e) { return null; }
+}
+function rowTimeKey(r) { return r.cleared && r.time !== null ? r.time : Infinity; }
+function dedupeShooterRows(rows) {
+  var best = new Map(); // 「constructor」「__proto__」等の名前も通常のキーとして扱う
+  (Array.isArray(rows) ? rows : []).forEach(function (raw) {
+    var row = normalizeRankRow(raw);
+    if (!row) return;
+    var cur = best.get(row.name);
+    if (!cur || row.score > cur.score || (row.score === cur.score && rowTimeKey(row) < rowTimeKey(cur))) best.set(row.name, row);
+  });
+  var out = [];
+  best.forEach(function (v) { out.push(v); });
+  return out.sort(function (a, b) { return (b.score - a.score) || (rowTimeKey(a) - rowTimeKey(b)); }).slice(0, 30);
 }
 function renderRanking(rows) {
   var html = dedupeShooterRows(rows).map(function (r, i) {
-    return "<li><span>" + (i + 1) + "位 " + escapeHtml(r.name) + (r.cleared ? " 🎉" + fmtTime(r.time) : "") + "</span><span>" + r.score + "点</span>" +
+    return "<li><span>" + (i + 1) + "位 " + escapeHtml(r.name) + (r.cleared ? " 🎉" + (r.time !== null ? fmtTime(r.time) : "") : "") + "</span><span>" + r.score + "点</span>" +
       "<span class=\"rankSub\">撃破 " + r.kills + " ／ 最大コンボ " + r.maxCombo + " ／ 最大チェーン " + r.maxChain + " ／ バースト " + r.bursts + " ／ 発射 " + r.shots + "</span></li>";
   }).join("");
   el("rankList").innerHTML = html;
   el("rankListTitle").innerHTML = html;
 }
+var RANK_LOAD_FAIL = "ランキングを読み込めませんでした";
 function loadRanking() {
-  if (!RANK_URL) { el("rankStatus").textContent = "ランキングは準備中です"; el("rankStatusTitle").textContent = "ランキングは準備中です"; return; }
-  fetch(RANK_URL).then(function (r) { return r.json(); }).then(function (rows) { renderRanking(rows || []); }).catch(function () {});
+  if (!RANK_URL) { el("rankStatus").textContent = "ランキングは準備中です"; el("rankStatusTitle").textContent = "ランキングは準備中です"; return null; }
+  var seq = ++rankLoadSeq;
+  el("rankStatusTitle").textContent = "読み込み中…";
+  return fetchJson(RANK_URL, {}, RANK_TIMEOUT_MS).then(function (data) {
+    if (seq !== rankLoadSeq) return; // 新しい読み込みが出ていれば古い応答は捨てる
+    var rows = Array.isArray(data) ? data : (data && Array.isArray(data.rows) ? data.rows : null);
+    if (!rows) throw new Error("bad payload");
+    renderRanking(rows);
+    el("rankStatusTitle").textContent = rows.length ? "" : "まだ登録がありません";
+    if (el("rankStatus").textContent === RANK_LOAD_FAIL) el("rankStatus").textContent = "";
+  }).catch(function () {
+    if (seq !== rankLoadSeq) return;
+    el("rankStatusTitle").textContent = RANK_LOAD_FAIL;
+    if (!el("rankStatus").textContent) el("rankStatus").textContent = RANK_LOAD_FAIL;
+  });
 }
+var RANK_SUBMIT_FAIL = "登録できませんでした（もう一度「登録」で再試行できます）";
 function submitScore() {
-  if (!RANK_URL || rankSent || !S || !S.over) return;
+  var ctx = rankCtx;
+  if (!RANK_URL || !ctx || !S || !S.over || !S.result || ctx.gameId !== S.gameId) return null;
+  if (ctx.sent || ctx.sending) return null;
   var name = (el("rankName").value || "").trim();
-  if (!name) { el("rankStatus").textContent = "ニックネームを入れてね"; return; }
-  rankSent = true;
+  if (!name) { setRankStatus(ctx, "ニックネームを入れてね"); return null; }
+  if (name.length > NAME_MAX) { setRankStatus(ctx, "ニックネームは" + NAME_MAX + "文字以内にしてね"); return null; }
+  ctx.sending = true;
   try { localStorage.setItem("equalshooter_name", name); } catch (e) {}
-  el("rankStatus").textContent = "登録中…";
-  fetch(RANK_URL, { method: "POST", body: JSON.stringify({ name: name, score: S.score, cleared: S.cleared ? 1 : 0, time: S.cleared ? Math.round(S.clearTime) : 0, kills: S.kills, maxCombo: S.maxCombo, maxChain: S.maxChain, bursts: S.bursts, shots: S.shotsFired }) })
-    .then(function () { el("rankStatus").textContent = "登録しました！"; loadRanking(); })
-    .catch(function () { el("rankStatus").textContent = "登録に失敗しました"; rankSent = false; });
+  setRankStatus(ctx, "登録中…");
+  setSubmitDisabled(ctx, true);
+  var R = ctx.result; // 終了時点で確定したスナップショット
+  var body = JSON.stringify({ name: name, score: R.score, cleared: R.cleared ? 1 : 0, time: R.time, kills: R.kills, maxCombo: R.maxCombo, maxChain: R.maxChain, bursts: R.bursts, shots: R.shots });
+  return fetchJson(RANK_URL, { method: "POST", body: body }, RANK_TIMEOUT_MS).then(function (data) {
+    if (!data || data.ok !== true) throw new Error("rejected");
+    ctx.sending = false;
+    ctx.sent = true;
+    setRankStatus(ctx, "登録しました！");
+    if (ctx === rankCtx) loadRanking();
+  }).catch(function () {
+    ctx.sending = false;
+    ctx.sent = false;
+    setRankStatus(ctx, RANK_SUBMIT_FAIL);
+    setSubmitDisabled(ctx, false);
+  });
 }
-function setupRanking() {
+function setupRanking(R) {
+  resetRankContext();
+  var ctx = rankCtx = { gameId: R.gameId, result: R, sent: false, sending: false, autoTimer: null };
   var saved = "";
   try { saved = localStorage.getItem("equalshooter_name") || ""; } catch (e) {}
   if (saved && !el("rankName").value) el("rankName").value = saved;
   el("rankStatus").textContent = "";
+  setSubmitDisabled(ctx, false);
   loadRanking();
-  if (RANK_URL && saved) setTimeout(submitScore, 700);
+  // 自動登録は「端末ベストを更新したゲーム」だけ（手動の登録ボタンは常時可能）
+  if (RANK_URL && saved && R.newBest) {
+    ctx.autoTimer = setTimeout(function () {
+      ctx.autoTimer = null;
+      if (ctx === rankCtx) submitScore();
+    }, 700);
+  }
 }
-function gameOver() {
-  if (S.over) return;
-  S.over = true;
-  S.running = false;
-  stopBGM();
-  sfxOver();
-  el("finalTitle").textContent = "GAME OVER";
-  el("gameScreen").classList.add("hidden");
-  el("finalScreen").classList.remove("hidden");
-  el("finalScore").textContent = S.score;
-  var best = 0, prevBest = 0;
-  try {
-    prevBest = parseInt(localStorage.getItem("equalshooter_best") || "0", 10);
-    best = prevBest;
-    if (S.score > best) { best = S.score; localStorage.setItem("equalshooter_best", String(best)); }
-  } catch (e) { best = S.score; }
-  el("bestLabel").textContent = "ベストスコア：" + best + " 点（この端末のみ）";
-  fillResultStats(prevBest);
-  setupRanking();
-}
+function gameOver() { return finishGame("over"); }
 
 var cv = el("cv");
 var ctx = null;
@@ -1205,11 +1340,17 @@ document.addEventListener("keyup", function (e) {
   if (e.key === "ArrowRight") S.keys.right = false;
 });
 var lastTs = 0;
+var loopErrors = 0;
 function loop(ts) {
+  requestAnimationFrame(loop); // 先に次のフレームを予約（step/render が例外を出してもループは止まらない）
   var dt = lastTs ? (ts - lastTs) / 1000 : 0.016;
   lastTs = ts;
-  if (S && S.running && !S.over) step(dt);
-  requestAnimationFrame(loop);
+  try {
+    if (S && S.running && !S.over) step(dt);
+  } catch (e) {
+    loopErrors++;
+    if (loopErrors <= 5 && typeof console !== "undefined" && console.error) console.error("BUNSHOOT loop error", e);
+  }
 }
 if (typeof requestAnimationFrame === "function") requestAnimationFrame(loop);
 
