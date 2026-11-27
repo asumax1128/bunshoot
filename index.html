@@ -104,6 +104,14 @@
   .resultChip { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 4px; font-size: 13px; font-weight: 800; letter-spacing: 1px; }
   .resultChip.gold { background: linear-gradient(180deg, #ffd94d, #ffb02e); color: #241a00; box-shadow: 0 0 18px rgba(255,176,46,.35); }
   .resultChip.hot { background: rgba(255,56,96,.14); border: 1px solid rgba(255,92,143,.7); color: #ff8fab; }
+  /* リザルトのふりかえり（バースト・詰みを最大3件。ランキングより上） */
+  #reviewBox { margin: 0 0 12px; background: rgba(120,170,255,.07); border: 1px solid rgba(130,190,255,.25); border-radius: 8px; padding: 8px 10px; text-align: left; }
+  #reviewBox .reviewHead { font-weight: 800; font-size: 13px; color: #aee2ff; letter-spacing: 1px; margin-bottom: 3px; }
+  #reviewList { margin: 0; padding: 0; list-style: none; }
+  #reviewList li { padding: 4px 0; border-top: 1px solid rgba(255,255,255,.12); line-height: 1.35; }
+  #reviewList li:first-child { border-top: none; }
+  #reviewList .rv1 { font-size: 13px; font-weight: 700; color: #ffd0dc; overflow-wrap: anywhere; }
+  #reviewList .rv2 { font-size: 13px; font-weight: 800; color: #95e07a; overflow-wrap: anywhere; }
   .statGrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 12px 0 14px; }
   .statBox { background: rgba(120,170,255,.07); border: 1px solid rgba(130,190,255,.25); border-radius: 8px; padding: 10px 4px; text-align: center; }
   .statBox .v { font-size: 24px; font-weight: 800; color: #fff; line-height: 1.1; }
@@ -303,6 +311,10 @@
       <div class="statBox"><div class="v" id="stBursts">0</div><div class="k">バースト</div></div>
       <div class="statBox"><div class="v" id="stShots">0</div><div class="k">発射</div></div>
       <div class="statBox"><div class="v" id="stStage">1</div><div class="k">到達ステージ</div></div>
+    </div>
+    <div id="reviewBox" class="hidden">
+      <div class="reviewHead">📝 ふりかえり</div>
+      <ol id="reviewList"></ol>
     </div>
     <div id="rankPanel">
       <div class="rankHead">🏆 ランキング</div>
@@ -519,6 +531,71 @@ var MISS_MAX = 300;
 function recordMiss(en, type) {
   if (!S || !S.misses || S.misses.length >= MISS_MAX) return;
   S.misses.push({ label: fracStr(en.label.n, en.label.d), shots: (en.hist || []).map(shotStr), type: type });
+}
+// ===== リザルトのふりかえり（段階7）=====
+// S.misses のバースト・詰みを最大 REVIEW_MAX 件、「何をしたか」と「正しい組み立て」の2行で出す（逃しは出さない）。
+var REVIEW_MAX = 3;
+var REVIEW_UNITS = [30, 20, 15, 12, 10]; // 1/2, 1/3, 1/4, 1/5, 1/6（1/12 は使わない）
+// 敵の値 k（60分率）から、弾だけで作れる一番少ない発数の組み立て。同点なら分母が小さい弾（単位の大きい弾）を先に。
+// 作れない・検算が合わないときは null（表示しない）。
+function assembleShots(k) {
+  if (!(k > 0) || k > 60 || Math.floor(k) !== k) return null;
+  var cnt = [0], v, i, u;
+  for (v = 1; v <= k; v++) {
+    cnt[v] = Infinity;
+    for (i = 0; i < REVIEW_UNITS.length; i++) { u = REVIEW_UNITS[i]; if (v >= u && cnt[v - u] + 1 < cnt[v]) cnt[v] = cnt[v - u] + 1; }
+  }
+  if (!isFinite(cnt[k])) return null;
+  var out = [], rem = k;
+  while (rem > 0) {
+    var picked = 0;
+    for (i = 0; i < REVIEW_UNITS.length; i++) { u = REVIEW_UNITS[i]; if (rem >= u && cnt[rem - u] === cnt[rem] - 1) { picked = u; break; } }
+    if (!picked) return null;
+    out.push(picked); rem -= picked;
+  }
+  var sum = out.reduce(function (a, x) { return a + x; }, 0);
+  return sum === k && out.length === cnt[k] ? out : null; // 表示前の検算
+}
+// S.misses から表示用の項目を作る。同じ敵・同じ当て方・同じ種類は1件にまとめ（最後に起きた位置に寄せる）、新しい方から max 件。
+function buildReview(misses, max) {
+  var seen = {}, list = [];
+  (misses || []).forEach(function (m) {
+    if (!m || (m.type !== "バースト" && m.type !== "詰み")) return;
+    if (!m.shots || !m.shots.length) return; // 当てた弾が0発のものは出さない
+    var mm = /^(\d+)\/(\d+)$/.exec(m.label || "");
+    if (!mm) return;
+    var n = +mm[1], d = +mm[2];
+    if (!d || 60 % d !== 0) return;
+    var k = n * (60 / d);
+    var asm = assembleShots(k);
+    if (!asm) return;
+    var terms = asm.map(function (u) { return fracStr(1, 60 / u); });
+    // 表示する式そのものを、文字列から読み直して検算する
+    var chk = terms.reduce(function (a, t) { return a + 60 / (+t.split("/")[1]); }, 0);
+    if (chk !== k) return;
+    var key = m.label + "|" + m.shots.join(",") + "|" + m.type;
+    if (seen[key] !== undefined) list[seen[key]] = null;
+    seen[key] = list.length;
+    list.push({ line1: m.label + " に " + m.shots.join(" → ") + "（" + m.type + "）", line2: m.label + " ＝ " + terms.join(" ＋ ") });
+  });
+  return list.filter(Boolean).slice(-max);
+}
+// 結果画面に描く。表示領域（スクロールなしで見える範囲）に収まらないときは、古い方から減らす（3→2→1件）。
+function renderReview() {
+  var box = el("reviewBox"), ul = el("reviewList");
+  if (!box || !ul) return;
+  ul.innerHTML = "";
+  var items = [];
+  try { items = buildReview(S && S.misses, REVIEW_MAX); } catch (e) { items = []; }
+  items.forEach(function (it) {
+    var li = document.createElement("li"), a = document.createElement("div"), b = document.createElement("div");
+    a.className = "rv1"; a.textContent = it.line1;
+    b.className = "rv2"; b.textContent = it.line2;
+    li.appendChild(a); li.appendChild(b); ul.appendChild(li);
+  });
+  box.classList.toggle("hidden", items.length === 0);
+  var vh = (typeof window !== "undefined" && window.innerHeight) || 0, off = (typeof window !== "undefined" && window.pageYOffset) || 0;
+  while (vh && ul.children.length > 1 && box.getBoundingClientRect().bottom + off > vh) ul.removeChild(ul.firstChild);
 }
 // 初めて詰んだ瞬間（canReachRem が偽になった瞬間）に「○ は作れない」を1回だけ
 // ===== STAGE1 の最初の6体（教材列）と初回ヒント（段階6）=====
@@ -1076,6 +1153,7 @@ function finishGame(kind) {
   el("finalScore").textContent = R.score;
   el("bestLabel").textContent = "ベストスコア：" + best + " 点（この端末のみ）";
   fillResultStats(R);
+  try { renderReview(); } catch (e) { /* ふりかえりの不具合で結果表示・ランキングを止めない */ }
   setupRanking(R);
   return R;
 }
