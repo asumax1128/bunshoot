@@ -380,15 +380,23 @@ function showBanner(text) {
   if (bannerTimer) clearTimeout(bannerTimer);
   bannerTimer = setTimeout(function () { b.style.opacity = "0"; }, 1600);
 }
-var BOSS_LABELS = { 36: [[3, 5], [6, 10]], 40: [[2, 3], [4, 6]], 42: [[7, 10]], 45: [[3, 4], [9, 12]], 48: [[4, 5], [8, 10]], 50: [[5, 6], [10, 12]], 54: [[9, 10]], 55: [[11, 12]] };
+var BOSS_LABELS = { 25: [[5, 12]], 35: [[7, 12]], 36: [[3, 5], [6, 10]], 40: [[2, 3], [4, 6]], 42: [[7, 10]], 45: [[3, 4], [9, 12]], 48: [[4, 5], [8, 10]], 50: [[5, 6], [10, 12]], 54: [[9, 10]], 55: [[11, 12]] };
 function bossLabelFor(k) {
   var opts = BOSS_LABELS[k];
   var p = opts[Math.floor(Math.random() * opts.length)];
   return { n: p[0], d: p[1] };
 }
+// ボスの層の値（60分率）：ステージ別。STAGE1はその面の雑魚の値（k≤36）＋次の面の予告（2/3・3/4）
+var BOSS_POOLS = {
+  1: [25, 35, 40, 45],
+  2: [36, 40, 42, 45, 48, 50],
+  3: [42, 45, 48, 50, 54, 55],
+  4: [36, 40, 42, 45, 48, 50, 54, 55]
+};
+function bossPoolFor(stage) { return BOSS_POOLS[Math.max(1, Math.min(4, stage))]; }
 function makeBoss() {
   var count = S && S.stage ? Math.min(6, 2 + S.stage) : 3;
-  var pool = [36, 40, 42, 45, 48, 50, 54, 55];
+  var pool = bossPoolFor(S && S.stage ? S.stage : 1);
   var ks = [], lastK = -1;
   for (var i = 0; i < count; i++) {
     var k = pool[Math.floor(Math.random() * pool.length)];
