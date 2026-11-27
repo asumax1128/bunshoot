@@ -9,7 +9,7 @@
 <style>
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   body {
-    margin: 0; padding: 18px 12px 44px;
+    margin: 0; padding: 18px 12px 12px;
     font-family: "M PLUS 1p", "Hiragino Maru Gothic ProN", "Hiragino Kaku Gothic ProN", sans-serif;
     background: radial-gradient(1200px 700px at 85% -10%, rgba(150,60,220,.35), rgba(0,0,0,0) 60%), radial-gradient(900px 600px at -10% 30%, rgba(40,90,220,.30), rgba(0,0,0,0) 60%), linear-gradient(170deg, #070b26 0%, #141038 55%, #241254 100%);
     background-attachment: fixed; color: #eef2ff; min-height: 100vh;
@@ -36,7 +36,7 @@
   #playRow { display: flex; gap: 10px; align-items: stretch; }
   #playMain { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; }
   #cvWrap { position: relative; border-radius: 22px; overflow: hidden; box-shadow: 0 14px 34px rgba(0,0,20,.45); }
-  #gameScreen { padding-bottom: 38px; }
+  #gameScreen { padding-bottom: 0; }
   body { touch-action: manipulation; }
   canvas { display: block; width: 100%; touch-action: none; }
   /* バナー：キャンバス上端の帯（中央の敵を隠さない）。表示時間は showBanner の1.6秒のまま */
@@ -128,11 +128,13 @@
   #hpBar { height: 100%; width: 100%; border-radius: 7px; background: linear-gradient(90deg, #5cb83f, #95e07a); transition: width .3s ease, background .3s; }
   #hpBar.low { background: linear-gradient(90deg, #ff5d8f, #ffb52e); animation: hpPulse .7s ease-in-out infinite; }
   @keyframes hpPulse { 50% { filter: brightness(1.35); } }
-  #sliderRow { display: flex; align-items: center; width: 100%; box-sizing: border-box; margin-top: 10px; background: rgba(9,13,38,.88); border: 1px solid rgba(110,200,255,.25); border-radius: 10px; padding: 10px 8px; box-shadow: 0 5px 14px rgba(0,0,20,.3); }
-  #sliderRow .cap { font-size: 13px; font-weight: 800; color: #9fd8ff; white-space: nowrap; }
-  #shipSlider { flex: 1; -webkit-appearance: none; appearance: none; height: 10px; border-radius: 3px; background: linear-gradient(90deg, #16295c, #274b8f); outline: none; }
-  #shipSlider::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 38px; height: 32px; border-radius: 6px; background: linear-gradient(180deg, #7fe3ff, #2ea8e0); border: 2px solid #dff6ff; box-shadow: 0 3px 10px rgba(0,180,255,.5); cursor: pointer; }
-  #shipSlider::-moz-range-thumb { width: 36px; height: 30px; border-radius: 6px; background: linear-gradient(180deg, #7fe3ff, #2ea8e0); border: 2px solid #dff6ff; box-shadow: 0 3px 10px rgba(0,180,255,.5); cursor: pointer; }
+  /* スライダー帯（高さは旧スライダー行と同じ36px＝弾ボタン列の位置を変えない）：行のどこを触ってもその横位置が自機の位置（つまみを掴む必要なし）。右端は弾ボタン列から16px以上離す */
+  #sliderRow { display: flex; align-items: center; gap: 6px; align-self: stretch; box-sizing: border-box; margin: 10px 6px 0 0; height: 36px; background: rgba(9,13,38,.88); border: 1px solid rgba(110,200,255,.25); border-radius: 10px; padding: 1px 8px; box-shadow: 0 5px 14px rgba(0,0,20,.3); touch-action: none; user-select: none; -webkit-user-select: none; cursor: pointer; }
+  #sliderRow .cap { font-size: 13px; font-weight: 800; color: #9fd8ff; white-space: nowrap; pointer-events: none; }
+  #shipTrack { position: relative; flex: 1; height: 32px; pointer-events: none; }
+  #shipTrack::before { content: ""; position: absolute; left: 0; right: 0; top: 11px; height: 10px; border-radius: 3px; background: linear-gradient(90deg, #16295c, #274b8f); }
+  #shipKnob { position: absolute; top: 0; left: 50%; width: 38px; height: 32px; box-sizing: border-box; transform: translateX(-50%); border-radius: 6px; background: linear-gradient(180deg, #7fe3ff, #2ea8e0); border: 2px solid #dff6ff; box-shadow: 0 3px 10px rgba(0,180,255,.5); display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 800; color: #0b3550; letter-spacing: 0; white-space: nowrap; }
+  #sliderRow.held #shipKnob { box-shadow: 0 0 0 3px rgba(127,227,255,.35), 0 3px 10px rgba(0,180,255,.6); }
   .note { font-size: 12.5px; color: #aab1d0; line-height: 1.6; text-align: center; }
   .hidden { display: none !important; }
   p.howto { line-height: 1.9; font-size: 15px; }
@@ -263,7 +265,9 @@
       <div id="banner"></div>
     </div>
     <div id="sliderRow">
-      <input type="range" id="shipSlider" min="0" max="1000" value="500">
+      <span class="cap">◀</span>
+      <div id="shipTrack"><div id="shipKnob">いどう</div></div>
+      <span class="cap">▶</span>
     </div>
     </div>
     <div id="shotCol">
@@ -1464,16 +1468,44 @@ function shipFromSlider(v) {
   if (!S) return;
   S.ship.x = 24 + (Math.max(0, Math.min(1000, v)) / 1000) * (W - 48);
 }
-var sliderEl = el("shipSlider");
-if (sliderEl && sliderEl.addEventListener) {
-  sliderEl.addEventListener("input", function () { shipFromSlider(parseInt(sliderEl.value, 10)); });
-  sliderEl.addEventListener("pointerdown", function () { sliderHeld = true; });
+// スライダー帯：#sliderRow 全体がタッチ帯。触れた横位置＝つまみ中心として 0〜1000 に変換し shipFromSlider に渡す。
+// 押さえた指（pointerId）だけを捕まえて追い、行の外に出ても追随する。別の指（弾ボタン）には影響しない。
+var sliderEl = el("sliderRow"), trackEl = el("shipTrack"), knobEl = el("shipKnob");
+var sliderHeld = false, sliderPointer = null;
+var KNOB_W = 38;
+function sliderValueFromClientX(clientX) {
+  var r = trackEl.getBoundingClientRect();
+  var span = Math.max(1, r.width - KNOB_W);
+  return Math.round(Math.max(0, Math.min(1, (clientX - r.left - KNOB_W / 2) / span)) * 1000);
+}
+function sliderMoveTo(clientX) { shipFromSlider(sliderValueFromClientX(clientX)); syncSlider(); }
+function sliderRelease(e) {
+  if (sliderPointer === null || (e && e.pointerId !== undefined && e.pointerId !== sliderPointer)) return;
+  sliderPointer = null; sliderHeld = false;
+  if (sliderEl) sliderEl.classList.remove("held");
+}
+if (sliderEl && trackEl && sliderEl.addEventListener) {
+  sliderEl.addEventListener("pointerdown", function (e) {
+    if (e.button !== undefined && e.button > 0) return;
+    if (e.preventDefault) e.preventDefault();
+    sliderPointer = e.pointerId === undefined ? 0 : e.pointerId;
+    sliderHeld = true;
+    sliderEl.classList.add("held");
+    if (sliderEl.setPointerCapture && e.pointerId !== undefined) { try { sliderEl.setPointerCapture(e.pointerId); } catch (err) {} }
+    sliderMoveTo(e.clientX);
+  });
+  sliderEl.addEventListener("pointermove", function (e) {
+    if (sliderPointer === null || (e.pointerId !== undefined && e.pointerId !== sliderPointer)) return;
+    sliderMoveTo(e.clientX);
+  });
+  sliderEl.addEventListener("pointerup", sliderRelease);
+  sliderEl.addEventListener("pointercancel", sliderRelease);
+  sliderEl.addEventListener("lostpointercapture", sliderRelease);
   if (typeof window !== "undefined" && window.addEventListener) {
-    window.addEventListener("pointerup", function () { sliderHeld = false; });
-    window.addEventListener("pointercancel", function () { sliderHeld = false; });
+    window.addEventListener("pointerup", sliderRelease);
+    window.addEventListener("pointercancel", sliderRelease);
   }
 }
-var sliderHeld = false;
 function fitGame() {
   if (typeof window === "undefined" || !window.innerHeight || !cv) return;
   var byHeight = Math.max(210, Math.floor((window.innerHeight - 215) * (W / H)));
@@ -1487,10 +1519,13 @@ function fitGame() {
   setupCanvasDPR();
 }
 if (typeof window !== "undefined" && window.addEventListener) window.addEventListener("resize", fitGame);
+// つまみの見た目を自機の位置に合わせる（キー移動・マウスでの移動も反映）
 function syncSlider() {
-  if (!S || !sliderEl) return;
-  var v = Math.round((S.ship.x - 24) / (W - 48) * 1000);
-  if (!sliderHeld) sliderEl.value = String(v);
+  if (!S || !knobEl || !trackEl) return;
+  var v = Math.max(0, Math.min(1000, Math.round((S.ship.x - 24) / (W - 48) * 1000)));
+  var span = Math.max(0, trackEl.clientWidth - KNOB_W);
+  var px = (KNOB_W / 2 + span * v / 1000).toFixed(1) + "px";
+  if (knobEl.style.left !== px) knobEl.style.left = px;
 }
 var dragging = false;
 function pointerX(e) {
