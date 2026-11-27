@@ -167,8 +167,9 @@
         <p><b>超えたらバースト。</b>溜まりが0に戻り、<b>-30点</b>でコンボとチェーンも消えます。大きい弾から欲張ると、残りが小さくなって詰みやすいので注意。</p>
         <div class="tutDemo">
           <span class="tutTarget"><span class="frac"><span class="fn">3</span><span class="fd">4</span></span><small>TARGET</small></span>
-          <span class="tutArrow">→</span><span>残り</span>
-          <span class="frac"><span class="fn">1</span><span class="fd">4</span></span>
+          <span>に</span><span class="frac"><span class="fn">1</span><span class="fd">2</span></span><span>を撃つ</span>
+          <span class="tutArrow">→</span><span>残り</span><span class="frac"><span class="fn">1</span><span class="fd">4</span></span>
+          <span class="tutArrow">→</span><span>ここに</span><span class="frac"><span class="fn">1</span><span class="fd">3</span></span><span>を撃つと</span>
           <span class="tutArrow">→</span><span class="tutWarn">BURST</span>
         </div>
         <p>残りが今の弾で作れないと、<span class="tutWarn">赤いリングと「！」</span>が出ます。あえてバーストさせて仕切り直すのも作戦です。</p>
@@ -180,7 +181,7 @@
         <div class="tutGrid">
           <div class="tutItem"><b>移動</b><br>画面下のスライダー。つまみの位置が自機の位置になります</div>
           <div class="tutItem"><b>発射</b><br>右側の分数ボタン。PCは1〜6キーでも撃てます</div>
-          <div class="tutItem"><b>コンボ</b><br>5コンボごとにHP+12。自機と弾も強化されます</div>
+          <div class="tutItem"><b>コンボ</b><br>5コンボごとにHP+12。見た目が強化され、10コンボで1/12が解放されます</div>
           <div class="tutItem"><b>チェーン</b><br>2.5秒以内の連続撃破で得点倍率アップ（最大2倍）</div>
           <div class="tutItem"><b>必殺技</b><br>満タンで自動発動。下の敵3体＋ボスの層1枚に効きます</div>
           <div class="tutItem"><b>回復</b><br>コンボを切らさず倒し続けると、HPを保ちやすくなります</div>
@@ -194,9 +195,9 @@
           <div class="tutItem"><b>分裂敵</b><br>水色で「2」の印。倒すと半分の値の敵2体に分かれます</div>
           <div class="tutItem"><b>1/12の弾</b><br>10コンボで解放。小さい残りの調整に強力です</div>
           <div class="tutItem"><b>再ロック</b><br>コンボが切れると1/12はまたロックされます</div>
-          <div class="tutItem"><b>連射アップ</b><br>コンボ段階が上がるほど、1/12を速く撃てます</div>
+          <div class="tutItem"><b>分母5の敵</b><br>分母が5の敵は、1/5の弾を中心に組み立てよう</div>
         </div>
-        <p>残りが <b>5/60</b> のような細かい値になったら、1/12の出番です。</p>
+        <p>残りが <b>1/12</b> のような細かい値になったら、1/12の出番です。</p>
       </div>
 
       <div class="tutPage hidden" id="tutPage4">
@@ -294,7 +295,7 @@
 <script>
 "use strict";
 // ===== CORE_START =====
-var BUNSHOOT_VERSION = "2.5";
+var BUNSHOOT_VERSION = "2.6";
 var W = 336, H = 580;
 function gcd(a, b) { return b === 0 ? a : gcd(b, a % b); }
 function reducePair(n, d) { var g = gcd(n, d); return { n: n / g, d: d / g }; }
@@ -392,6 +393,51 @@ function makeBoss() {
     ks.push(k); lastK = k;
   }
   return { x: W / 2, y: -70, r: 62, k: ks[0], sum: 0, label: bossLabelFor(ks[0]), vy: 26, flash: 0, warned: false, wob: 0, boss: true, layers: count, layerKs: ks, layerIdx: 0, minionBudget: 4 + count };
+}
+// ===== ボスの召喚（v2.6）=====
+// 射線（ボスの真下）を避けてボスの左右に出し、出現0.5秒前に予告、出現後0.6秒は弾と必殺がすり抜ける。
+var SUMMON_WARN_T = 0.5;   // 予告から出現までの秒数
+var SUMMON_GRACE = 0.6;    // 出現直後のすり抜け秒数
+function findBoss() {
+  if (!S || !S.enemies) return null;
+  var b = null;
+  for (var i = 0; i < S.enemies.length; i++) if (S.enemies[i].boss) b = S.enemies[i];
+  return b;
+}
+function summonBudgetOf(bossE) { return bossE && bossE.minionBudget == null ? 6 : (bossE ? bossE.minionBudget : 0); }
+// 召喚の条件（v2.5 と同じ）：ボスがいる・雑魚<3・予算>0・ボスが下がりすぎていない
+function summonAllowed(bossE) {
+  if (!bossE) return false;
+  var minionCount = S.enemies.filter(function (e) { return !e.boss; }).length;
+  return minionCount < 3 && summonBudgetOf(bossE) > 0 && bossE.y + 46 < H - 60;
+}
+// 予告を作る。左右は交互、x は 36〜300 に収め、ボスとの横距離が50未満になるなら反対側を使う。
+function makeSummonWarn(bossE, t) {
+  var side = bossE.summonSide === 1 ? -1 : 1;
+  bossE.summonSide = side;
+  var off = 70 + Math.random() * 30;
+  var x = Math.max(36, Math.min(W - 36, bossE.x + side * off));
+  if (Math.abs(x - bossE.x) < 50) {
+    side = -side;
+    x = Math.max(36, Math.min(W - 36, bossE.x + side * off));
+  }
+  return { x: x, side: side, t: t };
+}
+function spawnSummon(bossE, warn) {
+  bossE.minionBudget = summonBudgetOf(bossE) - 1; // 予算は実際に出現した時だけ減らす
+  var mn = makeEnemy();
+  mn.x = warn.x;
+  mn.y = bossE.y;
+  mn.grace = SUMMON_GRACE;
+  mn.graceFresh = true;
+  mn.summoned = true;
+  S.enemies.push(mn);
+  S.pops.push({ x: mn.x, y: mn.y - 24, text: "ボスの攻撃！", t: 0, small: true });
+  return mn;
+}
+// ボスが倒された・逃げた・ボス戦でなくなった場合は予告を取り消す
+function clearStaleSummonWarn() {
+  if (S && S.summonWarn && (S.phase !== "boss" || !findBoss())) S.summonWarn = null;
 }
 function pickSpawnX() {
   var x = 36 + Math.random() * (W - 72);
@@ -539,6 +585,7 @@ function newGame() {
     kills: 0, bursts: 0, shotsFired: 0, stage: 1, stageKills: 0, phase: "normal", bossAtkT: 0, stageT: 0, chain: 0, chainT: 0, maxChain: 0, cleared: false, clearTime: 0,
     ship: { x: W / 2 }, bullets: [], enemies: [], parts: [], pops: [],
     spawnT: 0.4, fireCd: 0, shake: 0, keys: {},
+    summonWarn: null,
     clock: makePlayClock(), result: null
   };
   el("startScreen").classList.add("hidden");
@@ -572,7 +619,7 @@ function onComboUp(x, y) {
 function specialFire() {
   if (!S || S.over || !S.running) return;
   if (S.special < 100) return;
-  var targets = S.enemies.filter(function (e) { return !e.boss && e.y > 30; }).sort(function (a, b) { return b.y - a.y; }).slice(0, 3);
+  var targets = S.enemies.filter(function (e) { return !e.boss && e.y > 30 && !(e.grace > 0); }).sort(function (a, b) { return b.y - a.y; }).slice(0, 3);
   var bossE = null;
   for (var bx = 0; bx < S.enemies.length; bx++) if (S.enemies[bx].boss && S.enemies[bx].y > 30) bossE = S.enemies[bx];
   if (targets.length === 0 && !bossE) return;
@@ -625,6 +672,7 @@ function specialFire() {
       }
     }
   }
+  clearStaleSummonWarn();
   render();
 }
 function fire(i) {
@@ -676,22 +724,32 @@ function step(dt) {
     }
   }
   if (S.phase === "boss") {
-    S.bossAtkT = (S.bossAtkT || 0) - s;
-    if (S.bossAtkT <= 0) {
-      S.bossAtkT = 3.2;
-      var bossE2 = null;
-      for (var bi2 = 0; bi2 < S.enemies.length; bi2++) if (S.enemies[bi2].boss) bossE2 = S.enemies[bi2];
-      var minionCount = S.enemies.filter(function (e) { return !e.boss; }).length;
-      var budget = bossE2 && bossE2.minionBudget == null ? 6 : (bossE2 ? bossE2.minionBudget : 0);
-      if (bossE2 && minionCount < 3 && budget > 0 && bossE2.y + 46 < H - 60) {
-        bossE2.minionBudget = budget - 1;
-        var mn = makeEnemy();
-        mn.x = Math.max(36, Math.min(W - 36, bossE2.x + (Math.random() * 70 - 35)));
-        mn.y = bossE2.y + 46;
-        S.enemies.push(mn);
-        S.pops.push({ x: mn.x, y: mn.y - 24, text: "ボスの攻撃！", t: 0, small: true });
+    // 召喚：周期は S.bossAtkT（最初2.2秒、以後3.2秒）のまま。出現0.5秒前に予告を出し、位置は予告時に確定する。
+    var bossE2 = findBoss();
+    var prevAtk = S.bossAtkT || 0;
+    S.bossAtkT = prevAtk - s;
+    var summonHandled = false;
+    if (!bossE2) S.summonWarn = null;
+    if (S.summonWarn) {
+      S.summonWarn.t -= s;
+      if (S.summonWarn.t <= 0) {
+        var sw = S.summonWarn;
+        S.summonWarn = null;
+        summonHandled = true;
+        if (summonAllowed(bossE2)) spawnSummon(bossE2, sw);
       }
     }
+    // 通常：タイマーが残り0.5秒を切った瞬間に予告を開始
+    if (!S.summonWarn && !summonHandled && prevAtk > SUMMON_WARN_T && S.bossAtkT <= SUMMON_WARN_T && summonAllowed(bossE2)) {
+      S.summonWarn = makeSummonWarn(bossE2, Math.max(0, S.bossAtkT));
+    }
+    if (S.bossAtkT <= 0) {
+      S.bossAtkT = 3.2;
+      // 予告開始時は条件を満たさず、周期の時点で満たした場合（雑魚が倒された等）：ここから0.5秒予告してから出す
+      if (!S.summonWarn && !summonHandled && summonAllowed(bossE2)) S.summonWarn = makeSummonWarn(bossE2, SUMMON_WARN_T);
+    }
+  } else if (S.summonWarn) {
+    S.summonWarn = null;
   }
   S.bullets.forEach(function (b) { b.y -= 460 * s; });
   S.bullets = S.bullets.filter(function (b) { return b.y > -12; });
@@ -700,6 +758,10 @@ function step(dt) {
     if (e.boss && e.y > 150 && e.vy > 6) e.vy = 6;
     if (e.boss && e.y > 140) { e.hoverT = (e.hoverT || 0) + s; e.x = W / 2 + Math.sin(S.t * 0.6 + e.wob) * 55 * Math.min(1, e.hoverT / 1.5); }
     if (e.flash > 0) e.flash -= s;
+    if (e.grace > 0) {
+      if (e.graceFresh) e.graceFresh = false; // 出現したフレームでは減らさない（すり抜けをちょうど SUMMON_GRACE 秒にする）
+      else e.grace = e.grace - s > 1e-6 ? e.grace - s : 0;
+    }
     if (!e.warned && e.y > H - 150) { e.warned = true; sfxWarn(); }
   });
   // 当たり判定：弾ごとに「一番下にいる敵」へ当てる
@@ -709,6 +771,7 @@ function step(dt) {
     var best = -1, bestY = -1e9;
     S.enemies.forEach(function (e, ei) {
       if (deadE[ei]) return;
+      if (e.grace > 0) return; // 出現直後の召喚雑魚は弾がすり抜ける
       var dx = b.x - e.x, dy = b.y - e.y;
       if (dx * dx + dy * dy < (e.r + 5) * (e.r + 5) && e.y > bestY) { best = ei; bestY = e.y; }
     });
@@ -808,6 +871,7 @@ function step(dt) {
   S.pops = S.pops.filter(function (p) { return p.t < 0.85; });
   if (S.shake > 0) S.shake -= s;
   if (S.special >= 100) specialFire();
+  clearStaleSummonWarn();
   syncSlider();
   render();
 }
@@ -1094,6 +1158,7 @@ function render() {
   ctx.fillText(S.phase === "boss" || S.phase === "bossIn" ? "― ボスを逃すと HP-40 ―" : "― 敵をここまで逃すと HP-20 ―", W / 2, H - 9);
   // 敵
   S.enemies.forEach(function (e) {
+    ctx.globalAlpha = e.grace > 0 ? 0.45 : 1; // 出現直後（すり抜け中）の召喚雑魚は半透明
     var bobX = Math.sin(e.wob) * 3;
     var ex = e.x + bobX, ey = e.y;
     var finC = e.boss ? "#cdb2ff" : e.split ? "#8fe8d8" : "#dfe7fa";
@@ -1181,7 +1246,32 @@ function render() {
       ctx.textAlign = "center";
       ctx.fillText("BOSS — あと" + (e.layers || 1) + "層", ex, ey - e.r - 16);
     }
+    ctx.globalAlpha = 1;
   });
+  // 召喚の予告（出現予定地点）
+  var warnBoss = S.summonWarn ? findBoss() : null;
+  if (S.summonWarn && warnBoss) {
+    var wx = S.summonWarn.x, wy = warnBoss.y;
+    var blink = Math.floor(S.t * 10) % 2 === 0;
+    ctx.save();
+    ctx.setLineDash([6, 4]);
+    ctx.beginPath();
+    ctx.arc(wx, wy, 27, 0, 6.29);
+    ctx.strokeStyle = blink ? "#ffd23e" : "#ff5d8f";
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.arc(wx, wy, 13, 0, 6.29);
+    ctx.fillStyle = blink ? "#ff5d8f" : "#d93a6e";
+    ctx.fill();
+    ctx.font = "800 18px 'M PLUS 1p', sans-serif";
+    ctx.fillStyle = "#fff";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("！", wx, wy + 1);
+    ctx.restore();
+  }
   // 弾（分数つきの玉）
   var BCOL = ["#ffd23e", "#4dd8ff", "#c792ff", "#ffb52e", "#ff5d8f"];
   S.bullets.forEach(function (b) {
