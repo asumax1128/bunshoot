@@ -501,7 +501,8 @@ function killFormula(hist, label, k) {
   var L = label.d;
   hist.forEach(function (u) { L = lcm(L, 60 / u); });
   var terms = hist.map(function (u) { return fracStr(L / (60 / u), L); });
-  return terms.join("＋") + "＝" + fracStr(k * L / 60, L) + " ✓";
+  var v = reducePair(k, 60); // 右辺は約分した形
+  return terms.join("＋") + "＝" + fracStr(v.n, v.d) + " ✓";
 }
 var FORMULA_LIFE = 1.4, FORMULA_MAX = 2;
 // 撃破・層破壊の式ポップ（チェーン5以上は「✓」だけ。同時表示は最大2つ、古いものから消す）
