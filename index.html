@@ -40,13 +40,15 @@
   body { touch-action: manipulation; }
   canvas { display: block; width: 100%; touch-action: none; }
   #banner { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 30px; font-weight: 800; color: #fff; text-shadow: 0 3px 0 rgba(30,20,90,.55), 0 6px 22px rgba(0,0,0,.5); pointer-events: none; opacity: 0; transition: opacity .18s; text-align: center; padding: 0 20px; }
-  #shotCol { display: flex; flex-direction: column; gap: 6px; width: 76px; }
+  /* 弾ボタン：2列3段・右下寄せ（行ごとに大→小。DOM順 shot0〜5 がそのまま並ぶ）。最上段は必殺メーター */
+  #shotCol { display: grid; grid-template-columns: 52px 52px; grid-template-rows: 14px 64px 64px 64px; gap: 6px; align-content: end; width: 110px; flex-shrink: 0; }
   .shotBtn {
-    flex: 1; width: 100%; min-height: 0; padding: 5px 2px; border-radius: 10px; font-size: 19px; font-weight: 800; color: #fff;
+    width: 100%; height: 100%; min-height: 0; padding: 2px 1px; border-radius: 10px; font-size: 18px; font-weight: 800; color: #fff; overflow: hidden;
     text-shadow: 0 2px 3px rgba(0,40,30,.3); touch-action: manipulation; user-select: none; -webkit-user-select: none;
   }
   .shotBtn .frac .fd { border-top-width: 3px; }
-  .shotBtn small { display: block; font-size: 9px; font-weight: 800; opacity: .85; margin-top: 1px; letter-spacing: 1px; }
+  .shotBtn small { display: block; font-size: 9px; font-weight: 800; opacity: .85; margin-top: 1px; letter-spacing: 1px; white-space: nowrap; }
+  #shot5.locked small { font-size: 8px; letter-spacing: 0; }
   #shot0 { background: linear-gradient(180deg, #ff8fab, #ff5d8f); box-shadow: 0 5px 0 #c24370; }
   #shot1 { background: linear-gradient(180deg, #a5a0ff, #6c63ff); box-shadow: 0 5px 0 #4a44b8; }
   #shot2 { background: linear-gradient(180deg, #7fe3d8, #2ec4b6); box-shadow: 0 5px 0 #1d8a7c; }
@@ -56,10 +58,11 @@
   .shotBtn.locked { filter: grayscale(0.95); opacity: 0.5; }
   .shotBtn.denied { animation: deniedShake .3s; }
   @keyframes deniedShake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-3px); } 75% { transform: translateX(3px); } }
-  #specialBtn { position: relative; overflow: hidden; width: 100%; height: 74px; flex-shrink: 0; border-radius: 10px; background: #33365e; color: #fff; font-size: 15px; font-weight: 800; box-shadow: 0 5px 0 #1d1f3d; touch-action: manipulation; user-select: none; -webkit-user-select: none; }
-  #specialFill { position: absolute; left: 0; right: 0; bottom: 0; height: 0%; background: linear-gradient(180deg, #ffd23e, #ff7847); opacity: .92; transition: height .25s ease; }
-  #specialLabel { position: relative; z-index: 1; writing-mode: vertical-rl; letter-spacing: 3px; text-shadow: 0 2px 3px rgba(20,10,60,.45); }
-  #specialBtn.ready { animation: hpPulse .7s ease-in-out infinite; box-shadow: 0 5px 0 #d18a06, 0 0 18px rgba(255,178,46,.8); }
+  /* 必殺技：押せない横メーター（ボタンの影・立体感なし）。溜まりは幅で表す */
+  #specialBtn { grid-column: 1 / -1; position: relative; overflow: hidden; width: 100%; height: 14px; border-radius: 3px; background: rgba(10,14,40,.75); border: 1px solid rgba(110,200,255,.30); box-sizing: border-box; color: #fff; display: flex; align-items: center; justify-content: center; touch-action: manipulation; user-select: none; -webkit-user-select: none; }
+  #specialFill { position: absolute; left: 0; top: 0; bottom: 0; width: 0%; background: linear-gradient(90deg, #ffd23e, #ff7847); opacity: .92; transition: width .25s ease; }
+  #specialLabel { position: relative; z-index: 1; font-size: 10px; font-weight: 800; line-height: 1; letter-spacing: 1px; white-space: nowrap; text-shadow: 0 1px 2px rgba(20,10,60,.9); }
+  #specialBtn.ready { animation: hpPulse .7s ease-in-out infinite; border-color: #ffd23e; box-shadow: 0 0 10px rgba(255,178,46,.85); }
   .shotBtn:active { transform: translateY(3px); }
   .finalScore { text-align: center; font-size: 54px; font-weight: 800; color: #ffb02e; margin: 6px 0; }
   /* ===== チュートリアル ===== */
@@ -252,13 +255,13 @@
     </div>
     </div>
     <div id="shotCol">
+      <div id="specialBtn"><span id="specialFill"></span><span id="specialLabel">必殺技</span></div>
       <button class="shotBtn" id="shot0"></button>
       <button class="shotBtn" id="shot1"></button>
       <button class="shotBtn" id="shot2"></button>
       <button class="shotBtn" id="shot3"></button>
       <button class="shotBtn" id="shot4"></button>
       <button class="shotBtn" id="shot5"></button>
-      <div id="specialBtn"><span id="specialFill"></span><span id="specialLabel">必殺技</span></div>
     </div>
     </div>
   </div>
@@ -1057,7 +1060,7 @@ function render() {
   hb.id = "hpBar";
   el("comboLabel").textContent = S ? S.combo + (S.chain >= 2 ? " ⛓" + S.chain : "") : 0;
   el("stageLabel").textContent = !S ? "STAGE 1" : (S.phase === "boss" || S.phase === "bossIn" ? "⚠️BOSS戦" : "STAGE " + S.stage);
-  el("specialFill").style.height = (S ? S.special : 0) + "%";
+  el("specialFill").style.width = (S ? S.special : 0) + "%";
   el("specialBtn").classList.toggle("ready", !!(S && S.special >= 100));
   el("specialLabel").textContent = S && S.special >= 100 ? "自動発動" : "必殺技";
   var unl = S ? tierOf(S.combo) >= 2 : false;
@@ -1305,7 +1308,13 @@ if (sliderEl && sliderEl.addEventListener) {
 var sliderHeld = false;
 function fitGame() {
   if (typeof window === "undefined" || !window.innerHeight || !cv) return;
-  var w = Math.min(336, Math.max(210, Math.floor((window.innerHeight - 215) * (W / H))));
+  var byHeight = Math.max(210, Math.floor((window.innerHeight - 215) * (W / H)));
+  // 横幅の上限：プレイ行の幅から、右の弾ボタン列（2列3段）と間隔を差し引く
+  var row = el("playRow"), col = el("shotCol");
+  var rowW = (row && row.clientWidth) || Math.min(460, (window.innerWidth || 460) - 24);
+  var colW = (col && col.offsetWidth) || 110;
+  var byWidth = Math.floor(rowW - colW - 10);
+  var w = Math.max(160, Math.min(336, byHeight, byWidth));
   cv.style.width = w + "px";
 }
 if (typeof window !== "undefined" && window.addEventListener) window.addEventListener("resize", fitGame);
