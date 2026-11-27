@@ -9,7 +9,7 @@
 <style>
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   body {
-    margin: 0; padding: 18px 12px 44px;
+    margin: 0; padding: 18px 12px 12px;
     font-family: "M PLUS 1p", "Hiragino Maru Gothic ProN", "Hiragino Kaku Gothic ProN", sans-serif;
     background: radial-gradient(1200px 700px at 85% -10%, rgba(150,60,220,.35), rgba(0,0,0,0) 60%), radial-gradient(900px 600px at -10% 30%, rgba(40,90,220,.30), rgba(0,0,0,0) 60%), linear-gradient(170deg, #070b26 0%, #141038 55%, #241254 100%);
     background-attachment: fixed; color: #eef2ff; min-height: 100vh;
@@ -36,12 +36,23 @@
   #playRow { display: flex; gap: 10px; align-items: stretch; }
   #playMain { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; }
   #cvWrap { position: relative; border-radius: 22px; overflow: hidden; box-shadow: 0 14px 34px rgba(0,0,20,.45); }
-  #gameScreen { padding-bottom: 38px; }
+  #gameScreen { padding-bottom: 0; }
   body { touch-action: manipulation; }
   canvas { display: block; width: 100%; touch-action: none; }
-  #banner { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 30px; font-weight: 800; color: #fff; text-shadow: 0 3px 0 rgba(30,20,90,.55), 0 6px 22px rgba(0,0,0,.5); pointer-events: none; opacity: 0; transition: opacity .18s; text-align: center; padding: 0 20px; }
+  /* バナー：キャンバス上端の帯（中央の敵を隠さない）。表示時間は showBanner の1.6秒のまま */
+  #banner { position: absolute; left: 8px; right: 8px; top: 8px; display: block; font-size: 20px; line-height: 1.35; font-weight: 800; color: #fff; text-shadow: 0 2px 0 rgba(30,20,90,.55); background: rgba(10,8,40,.62); border: 1px solid rgba(110,200,255,.30); border-radius: 8px; padding: 5px 10px; pointer-events: none; opacity: 0; transition: opacity .18s; text-align: center; }
   /* 弾ボタン：2列3段・右下寄せ（行ごとに大→小。DOM順 shot0〜5 がそのまま並ぶ）。最上段は必殺メーター */
-  #shotCol { display: grid; grid-template-columns: 52px 52px; grid-template-rows: 14px 64px 64px 64px; gap: 6px; align-content: end; width: 110px; flex-shrink: 0; }
+  #shotCol { display: grid; grid-template-columns: 52px 52px; grid-template-rows: minmax(0, 1fr) 14px 64px 64px 64px; gap: 6px; align-content: end; width: 110px; flex-shrink: 0; }
+  /* 右上パネル：ボスまでの残り・ボスの残り層・コンボ（ボタン列の上の空き） */
+  #infoPanel { grid-column: 1 / -1; align-self: start; min-height: 0; overflow: hidden; box-sizing: border-box; background: rgba(9,13,38,.86); border: 1px solid rgba(110,200,255,.30); border-radius: 8px; padding: 7px 8px 8px; color: #d9e8ff; text-align: center; user-select: none; -webkit-user-select: none; }
+  #infoPanel .ipK { font-size: 11px; font-weight: 800; color: #93a5d4; letter-spacing: 1px; line-height: 1.2; }
+  #infoCombo { font-size: 30px; font-weight: 800; line-height: 1.05; color: #ffb02e; }
+  #infoComboBox { padding-bottom: 6px; margin-bottom: 6px; border-bottom: 1px solid rgba(110,200,255,.22); }
+  #infoGoal { font-size: 15px; font-weight: 800; line-height: 1.25; color: #fff; white-space: nowrap; }
+  #infoBarWrap { height: 6px; margin-top: 5px; border-radius: 3px; background: rgba(110,200,255,.15); overflow: hidden; }
+  #infoBar { height: 100%; width: 0%; background: linear-gradient(90deg, #57c8ff, #95e07a); transition: width .2s ease; }
+  #infoPanel.boss #infoGoal { color: #ffd23e; }
+  #infoPanel.boss #infoBar { background: linear-gradient(90deg, #ffd23e, #ff5d8f); }
   .shotBtn {
     width: 100%; height: 100%; min-height: 0; padding: 2px 1px; border-radius: 10px; font-size: 18px; font-weight: 800; color: #fff; overflow: hidden;
     text-shadow: 0 2px 3px rgba(0,40,30,.3); touch-action: manipulation; user-select: none; -webkit-user-select: none;
@@ -117,11 +128,13 @@
   #hpBar { height: 100%; width: 100%; border-radius: 7px; background: linear-gradient(90deg, #5cb83f, #95e07a); transition: width .3s ease, background .3s; }
   #hpBar.low { background: linear-gradient(90deg, #ff5d8f, #ffb52e); animation: hpPulse .7s ease-in-out infinite; }
   @keyframes hpPulse { 50% { filter: brightness(1.35); } }
-  #sliderRow { display: flex; align-items: center; width: 100%; box-sizing: border-box; margin-top: 10px; background: rgba(9,13,38,.88); border: 1px solid rgba(110,200,255,.25); border-radius: 10px; padding: 10px 8px; box-shadow: 0 5px 14px rgba(0,0,20,.3); }
-  #sliderRow .cap { font-size: 13px; font-weight: 800; color: #9fd8ff; white-space: nowrap; }
-  #shipSlider { flex: 1; -webkit-appearance: none; appearance: none; height: 10px; border-radius: 3px; background: linear-gradient(90deg, #16295c, #274b8f); outline: none; }
-  #shipSlider::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 38px; height: 32px; border-radius: 6px; background: linear-gradient(180deg, #7fe3ff, #2ea8e0); border: 2px solid #dff6ff; box-shadow: 0 3px 10px rgba(0,180,255,.5); cursor: pointer; }
-  #shipSlider::-moz-range-thumb { width: 36px; height: 30px; border-radius: 6px; background: linear-gradient(180deg, #7fe3ff, #2ea8e0); border: 2px solid #dff6ff; box-shadow: 0 3px 10px rgba(0,180,255,.5); cursor: pointer; }
+  /* スライダー帯（高さは旧スライダー行と同じ36px＝弾ボタン列の位置を変えない）：行のどこを触ってもその横位置が自機の位置（つまみを掴む必要なし）。右端は弾ボタン列から16px以上離す */
+  #sliderRow { display: flex; align-items: center; gap: 6px; align-self: stretch; box-sizing: border-box; margin: 10px 6px 0 0; height: 36px; background: rgba(9,13,38,.88); border: 1px solid rgba(110,200,255,.25); border-radius: 10px; padding: 1px 8px; box-shadow: 0 5px 14px rgba(0,0,20,.3); touch-action: none; user-select: none; -webkit-user-select: none; cursor: pointer; }
+  #sliderRow .cap { font-size: 13px; font-weight: 800; color: #9fd8ff; white-space: nowrap; pointer-events: none; }
+  #shipTrack { position: relative; flex: 1; height: 32px; pointer-events: none; }
+  #shipTrack::before { content: ""; position: absolute; left: 0; right: 0; top: 11px; height: 10px; border-radius: 3px; background: linear-gradient(90deg, #16295c, #274b8f); }
+  #shipKnob { position: absolute; top: 0; left: 50%; width: 38px; height: 32px; box-sizing: border-box; transform: translateX(-50%); border-radius: 6px; background: linear-gradient(180deg, #7fe3ff, #2ea8e0); border: 2px solid #dff6ff; box-shadow: 0 3px 10px rgba(0,180,255,.5); display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 800; color: #0b3550; letter-spacing: 0; white-space: nowrap; }
+  #sliderRow.held #shipKnob { box-shadow: 0 0 0 3px rgba(127,227,255,.35), 0 3px 10px rgba(0,180,255,.6); }
   .note { font-size: 12.5px; color: #aab1d0; line-height: 1.6; text-align: center; }
   .hidden { display: none !important; }
   p.howto { line-height: 1.9; font-size: 15px; }
@@ -182,7 +195,7 @@
         <span class="tutStep">STEP 3 / 5</span>
         <p><b>左手で移動、右手で発射。</b>同時操作で狙えます。敵を下まで逃すとHP-20、ボスはHP-40。HPが0になると終了です。</p>
         <div class="tutGrid">
-          <div class="tutItem"><b>移動</b><br>画面下のスライダー。つまみの位置が自機の位置になります</div>
+          <div class="tutItem"><b>移動</b><br>画面下の帯。触った場所に自機が動きます</div>
           <div class="tutItem"><b>発射</b><br>右側の分数ボタン。PCは1〜6キーでも撃てます</div>
           <div class="tutItem"><b>コンボ</b><br>5コンボごとにHP+12。見た目が強化され、10コンボで1/12が解放されます</div>
           <div class="tutItem"><b>チェーン</b><br>2.5秒以内の連続撃破で得点倍率アップ（最大2倍）</div>
@@ -252,10 +265,17 @@
       <div id="banner"></div>
     </div>
     <div id="sliderRow">
-      <input type="range" id="shipSlider" min="0" max="1000" value="500">
+      <span class="cap">◀</span>
+      <div id="shipTrack"><div id="shipKnob">いどう</div></div>
+      <span class="cap">▶</span>
     </div>
     </div>
     <div id="shotCol">
+      <div id="infoPanel">
+        <div id="infoComboBox"><div class="ipK">コンボ</div><div id="infoCombo">0</div></div>
+        <div class="ipK" id="infoGoalK">ボスまで</div><div id="infoGoal">あと12体</div>
+        <div id="infoBarWrap"><div id="infoBar"></div></div>
+      </div>
       <div id="specialBtn"><span id="specialFill"></span><span id="specialLabel">必殺技</span></div>
       <button class="shotBtn" id="shot0"></button>
       <button class="shotBtn" id="shot1"></button>
@@ -1113,6 +1133,21 @@ function gameOver() { return finishGame("over"); }
 var cv = el("cv");
 var ctx = null;
 try { ctx = cv && cv.getContext ? cv.getContext("2d") : null; } catch (e) { ctx = null; }
+// 内部解像度を devicePixelRatio 倍（上限2）にし、描画の座標系は W×H（336×580）のまま使う
+var canvasDPR = 0;
+function setupCanvasDPR() {
+  if (!cv || !ctx) return;
+  var dpr = 1;
+  try { dpr = (typeof window !== "undefined" && window.devicePixelRatio) || 1; } catch (e) { dpr = 1; }
+  dpr = Math.max(1, Math.min(2, dpr));
+  if (dpr === canvasDPR) return;
+  canvasDPR = dpr;
+  cv.width = Math.round(W * dpr);   // width/height を変えると文脈の状態（変換）が初期化される
+  cv.height = Math.round(H * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // 以後の save/translate/restore はこの基準の上で動く
+  if (S) render();
+}
+setupCanvasDPR();
 function drawFrac(c, n, d, cx, cy, size, color) {
   c.fillStyle = color;
   c.textAlign = "center";
@@ -1123,6 +1158,32 @@ function drawFrac(c, n, d, cx, cy, size, color) {
   var w = Math.max(c.measureText(String(n)).width, c.measureText(String(d)).width) + 6;
   c.fillRect(cx - w / 2, cy - 1.5, w, 3);
 }
+// 右上パネル：通常時は「ボスまで あと○体」＋進捗、ボス戦時は「ボスの層 あと○枚」、コンボ数
+function setText(id, t) { var n = el(id); if (n && n.textContent !== String(t)) n.textContent = t; }
+function updateInfoPanel() {
+  var panel = el("infoPanel");
+  if (!panel) return;
+  if (!S) { setText("infoCombo", 0); setText("infoGoalK", "ボスまで"); setText("infoGoal", "あと" + quotaFor(1) + "体"); el("infoBar").style.width = "0%"; return; }
+  setText("infoCombo", S.combo);
+  var bossE = S.phase === "boss" ? findBoss() : null;
+  var isBoss = S.phase === "boss" || S.phase === "bossIn";
+  panel.classList.toggle("boss", isBoss);
+  if (bossE) {
+    var total = bossE.layerKs.length, left = total - bossE.layerIdx;
+    setText("infoGoalK", "ボスの層");
+    setText("infoGoal", "あと" + left + "枚");
+    el("infoBar").style.width = Math.round((total - left) / total * 100) + "%";
+  } else if (isBoss) {
+    setText("infoGoalK", "ボスの層");
+    setText("infoGoal", "ボス接近！");
+    el("infoBar").style.width = "0%";
+  } else {
+    var q = quotaFor(S.stage), left2 = Math.max(0, q - S.stageKills);
+    setText("infoGoalK", "ボスまで");
+    setText("infoGoal", "あと" + left2 + "体");
+    el("infoBar").style.width = Math.round(Math.min(1, S.stageKills / q) * 100) + "%";
+  }
+}
 function render() {
   el("scoreLabel").textContent = S ? S.score : 0;
   el("hpLabel").textContent = S ? Math.max(0, S.hp) : 100;
@@ -1132,6 +1193,7 @@ function render() {
   hb.id = "hpBar";
   el("comboLabel").textContent = S ? S.combo + (S.chain >= 2 ? " ⛓" + S.chain : "") : 0;
   el("stageLabel").textContent = !S ? "STAGE 1" : (S.phase === "boss" || S.phase === "bossIn" ? "⚠️BOSS戦" : "STAGE " + S.stage);
+  updateInfoPanel();
   el("specialFill").style.width = (S ? S.special : 0) + "%";
   el("specialBtn").classList.toggle("ready", !!(S && S.special >= 100));
   el("specialLabel").textContent = S && S.special >= 100 ? "自動発動" : "必殺技";
@@ -1211,7 +1273,7 @@ function render() {
     ctx.beginPath();
     for (var hp2 = 0; hp2 < 6; hp2++) {
       var ha = Math.PI / 3 * hp2 - Math.PI / 2;
-      var hx = ex + Math.cos(ha) * e.r * 0.68, hy = ey + Math.sin(ha) * e.r * 0.68;
+      var hx = ex + Math.cos(ha) * e.r * 0.74, hy = ey + Math.sin(ha) * e.r * 0.74;
       if (hp2 === 0) ctx.moveTo(hx, hy); else ctx.lineTo(hx, hy);
     }
     ctx.closePath();
@@ -1236,10 +1298,22 @@ function render() {
       }
     }
     if (e.sum === 0) {
-      drawFrac(ctx, e.label.n, e.label.d, ex, ey, e.boss ? 21 : 15, "#fff");
+      drawFrac(ctx, e.label.n, e.label.d, ex, ey, e.boss ? 24 : 18, "#fff");
     } else {
       var rem = reducePair(e.k - e.sum, 60);
-      drawFrac(ctx, rem.n, rem.d, ex, ey, e.boss ? 21 : 15, "#ffd23e");
+      drawFrac(ctx, rem.n, rem.d, ex, ey, e.boss ? 24 : 18, "#ffd23e");
+      // 3.「のこり」：雑魚は敵の上（角の間）、ボスは六角形の内側上部
+      ctx.save();
+      ctx.font = "800 " + (e.boss ? 11 : 9) + "px 'M PLUS 1p', sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      var nokoY = e.boss ? ey - e.r * 0.58 : ey - e.r - 6;
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = "rgba(20,12,50,.9)";
+      ctx.strokeText("のこり", ex, nokoY);
+      ctx.fillStyle = "#ffd23e";
+      ctx.fillText("のこり", ex, nokoY);
+      ctx.restore();
     }
     if (e.split) {
       ctx.beginPath();
@@ -1394,16 +1468,44 @@ function shipFromSlider(v) {
   if (!S) return;
   S.ship.x = 24 + (Math.max(0, Math.min(1000, v)) / 1000) * (W - 48);
 }
-var sliderEl = el("shipSlider");
-if (sliderEl && sliderEl.addEventListener) {
-  sliderEl.addEventListener("input", function () { shipFromSlider(parseInt(sliderEl.value, 10)); });
-  sliderEl.addEventListener("pointerdown", function () { sliderHeld = true; });
+// スライダー帯：#sliderRow 全体がタッチ帯。触れた横位置＝つまみ中心として 0〜1000 に変換し shipFromSlider に渡す。
+// 押さえた指（pointerId）だけを捕まえて追い、行の外に出ても追随する。別の指（弾ボタン）には影響しない。
+var sliderEl = el("sliderRow"), trackEl = el("shipTrack"), knobEl = el("shipKnob");
+var sliderHeld = false, sliderPointer = null;
+var KNOB_W = 38;
+function sliderValueFromClientX(clientX) {
+  var r = trackEl.getBoundingClientRect();
+  var span = Math.max(1, r.width - KNOB_W);
+  return Math.round(Math.max(0, Math.min(1, (clientX - r.left - KNOB_W / 2) / span)) * 1000);
+}
+function sliderMoveTo(clientX) { shipFromSlider(sliderValueFromClientX(clientX)); syncSlider(); }
+function sliderRelease(e) {
+  if (sliderPointer === null || (e && e.pointerId !== undefined && e.pointerId !== sliderPointer)) return;
+  sliderPointer = null; sliderHeld = false;
+  if (sliderEl) sliderEl.classList.remove("held");
+}
+if (sliderEl && trackEl && sliderEl.addEventListener) {
+  sliderEl.addEventListener("pointerdown", function (e) {
+    if (e.button !== undefined && e.button > 0) return;
+    if (e.preventDefault) e.preventDefault();
+    sliderPointer = e.pointerId === undefined ? 0 : e.pointerId;
+    sliderHeld = true;
+    sliderEl.classList.add("held");
+    if (sliderEl.setPointerCapture && e.pointerId !== undefined) { try { sliderEl.setPointerCapture(e.pointerId); } catch (err) {} }
+    sliderMoveTo(e.clientX);
+  });
+  sliderEl.addEventListener("pointermove", function (e) {
+    if (sliderPointer === null || (e.pointerId !== undefined && e.pointerId !== sliderPointer)) return;
+    sliderMoveTo(e.clientX);
+  });
+  sliderEl.addEventListener("pointerup", sliderRelease);
+  sliderEl.addEventListener("pointercancel", sliderRelease);
+  sliderEl.addEventListener("lostpointercapture", sliderRelease);
   if (typeof window !== "undefined" && window.addEventListener) {
-    window.addEventListener("pointerup", function () { sliderHeld = false; });
-    window.addEventListener("pointercancel", function () { sliderHeld = false; });
+    window.addEventListener("pointerup", sliderRelease);
+    window.addEventListener("pointercancel", sliderRelease);
   }
 }
-var sliderHeld = false;
 function fitGame() {
   if (typeof window === "undefined" || !window.innerHeight || !cv) return;
   var byHeight = Math.max(210, Math.floor((window.innerHeight - 215) * (W / H)));
@@ -1414,12 +1516,16 @@ function fitGame() {
   var byWidth = Math.floor(rowW - colW - 10);
   var w = Math.max(160, Math.min(336, byHeight, byWidth));
   cv.style.width = w + "px";
+  setupCanvasDPR();
 }
 if (typeof window !== "undefined" && window.addEventListener) window.addEventListener("resize", fitGame);
+// つまみの見た目を自機の位置に合わせる（キー移動・マウスでの移動も反映）
 function syncSlider() {
-  if (!S || !sliderEl) return;
-  var v = Math.round((S.ship.x - 24) / (W - 48) * 1000);
-  if (!sliderHeld) sliderEl.value = String(v);
+  if (!S || !knobEl || !trackEl) return;
+  var v = Math.max(0, Math.min(1000, Math.round((S.ship.x - 24) / (W - 48) * 1000)));
+  var span = Math.max(0, trackEl.clientWidth - KNOB_W);
+  var px = (KNOB_W / 2 + span * v / 1000).toFixed(1) + "px";
+  if (knobEl.style.left !== px) knobEl.style.left = px;
 }
 var dragging = false;
 function pointerX(e) {
