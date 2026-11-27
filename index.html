@@ -423,7 +423,7 @@ function makeBoss() {
     if (k === lastK) k = pool[(pool.indexOf(k) + 3) % pool.length];
     ks.push(k); lastK = k;
   }
-  return { x: W / 2, y: -70, r: 62, k: ks[0], sum: 0, label: bossLabelFor(ks[0]), vy: 26, flash: 0, warned: false, wob: 0, boss: true, layers: count, layerKs: ks, layerIdx: 0, minionBudget: 4 + count };
+  return { x: W / 2, y: -70, r: 62, k: ks[0], sum: 0, hist: [], label: bossLabelFor(ks[0]), vy: 26, flash: 0, warned: false, wob: 0, boss: true, layers: count, layerKs: ks, layerIdx: 0, minionBudget: 4 + count };
 }
 // ===== ボスの召喚（v2.6）=====
 // 射線（ボスの真下）を避けてボスの左右に出し、出現0.5秒前に予告、出現後0.6秒は弾と必殺がすり抜ける。
@@ -485,11 +485,57 @@ function pickSpawnX() {
 }
 var SPLIT_KS = [20, 24, 30, 40, 50, 54];
 var CHILD_LABELS = { 10: [1, 6], 12: [1, 5], 15: [1, 4], 20: [1, 3], 25: [5, 12], 27: [9, 20] };
+// ===== 式で返すフィードバック（段階5）=====
+// 当てた弾の単位 u（60分率）の履歴 en.hist から、撃破の式・超過量・詰みの理由を作る。
+function lcm(a, b) { return a / gcd(a, b) * b; }
+function fracStr(n, d) { return n + "/" + d; }
+function shotStr(u) { return fracStr(1, 60 / u); }
+// 撃破の式：共通の分母＝当てた弾の分母と敵の表記の分母の最小公倍数
+function killFormula(hist, label, k) {
+  if (!hist || !hist.length) return "";
+  if (hist.length === 1) {
+    var d1 = 60 / hist[0];
+    if (label.n === 1 && label.d === d1) return ""; // もともと約分済みの表記を1発：出さない
+    return fracStr(label.n, label.d) + "＝" + shotStr(hist[0]) + " ✓"; // 約分前の表記を1発
+  }
+  var L = label.d;
+  hist.forEach(function (u) { L = lcm(L, 60 / u); });
+  var terms = hist.map(function (u) { return fracStr(L / (60 / u), L); });
+  var v = reducePair(k, 60); // 右辺は約分した形
+  return terms.join("＋") + "＝" + fracStr(v.n, v.d) + " ✓";
+}
+var FORMULA_LIFE = 1.4, FORMULA_MAX = 2;
+// 撃破・層破壊の式ポップ（チェーン5以上は「✓」だけ。同時表示は最大2つ、古いものから消す）
+function pushFormulaPop(x, y, hist, label, k) {
+  var text = killFormula(hist, label, k);
+  if (!text) return;
+  if (S.chain >= 5) text = "✓";
+  var fs = S.pops.filter(function (p) { return p.formula; });
+  while (fs.length >= FORMULA_MAX) { var old = fs.shift(); S.pops = S.pops.filter(function (p) { return p !== old; }); }
+  S.pops.push({ x: x, y: y - 24, text: text, t: 0, formula: true, life: FORMULA_LIFE });
+}
+// ミスの記録（次段階のふりかえり用。画面にもランキングにも出さない）
+var MISS_MAX = 300;
+function recordMiss(en, type) {
+  if (!S || !S.misses || S.misses.length >= MISS_MAX) return;
+  S.misses.push({ label: fracStr(en.label.n, en.label.d), shots: (en.hist || []).map(shotStr), type: type });
+}
+// 初めて詰んだ瞬間（canReachRem が偽になった瞬間）に「○ は作れない」を1回だけ
+function checkNewlyStuck() {
+  S.enemies.forEach(function (e) {
+    if (e.sum > 0 && !e.stuckShown && !canReachRem(e.k - e.sum)) {
+      e.stuckShown = true;
+      var rem = reducePair(e.k - e.sum, 60);
+      S.pops.push({ x: e.x, y: e.y + e.r + 16, text: fracStr(rem.n, rem.d) + " は作れない", t: 0, bad: true, small: true, life: 1.2 });
+      recordMiss(e, "詰み");
+    }
+  });
+}
 function spawnSplit(en) {
   var ck = en.k / 2, lab = CHILD_LABELS[ck];
   if (!lab) return;
   [-30, 30].forEach(function (dx) {
-    S.enemies.push({ x: Math.max(30, Math.min(W - 30, en.x + dx)), y: en.y, r: 23, k: ck, sum: 0, label: { n: lab[0], d: lab[1] }, vy: en.vy + 12, flash: 0, warned: en.warned, wob: Math.random() * 6.28, split: false });
+    S.enemies.push({ x: Math.max(30, Math.min(W - 30, en.x + dx)), y: en.y, r: 23, k: ck, sum: 0, hist: [], label: { n: lab[0], d: lab[1] }, vy: en.vy + 12, flash: 0, warned: en.warned, wob: Math.random() * 6.28, split: false });
   });
   S.pops.push({ x: en.x, y: en.y - 30, text: "分裂！", t: 0, small: true });
 }
@@ -499,7 +545,7 @@ function makeEnemy() {
   var speed = 30 + Math.random() * 22 + Math.min(38, (S ? S.stageT : 0) * 0.4) + (S && S.stage ? (S.stage - 1) * 4 : 0);
   return {
     x: pickSpawnX(), y: -34, r: 27,
-    k: spec.k, sum: 0, label: { n: lab[0], d: lab[1] },
+    k: spec.k, sum: 0, hist: [], label: { n: lab[0], d: lab[1] },
     vy: speed, flash: 0, warned: false, wob: Math.random() * 6.28, split: SPLIT_KS.indexOf(spec.k) >= 0 && Math.random() < 0.22
   };
 }
@@ -613,6 +659,7 @@ function newGame() {
   S = {
     gameId: gameSeq,
     running: true, over: false, t: 0, score: 0, hp: 100, combo: 0, maxCombo: 0, special: 0,
+    misses: [],
     kills: 0, bursts: 0, shotsFired: 0, stage: 1, stageKills: 0, phase: "normal", bossAtkT: 0, stageT: 0, chain: 0, chainT: 0, maxChain: 0, cleared: false, clearTime: 0,
     ship: { x: W / 2 }, bullets: [], enemies: [], parts: [], pops: [],
     spawnT: 0.4, fireCd: 0, shake: 0, keys: {},
@@ -677,6 +724,7 @@ function specialFire() {
       bossE.label = bossLabelFor(bossE.k);
       bossE.layers = bossE.layerKs.length - bossE.layerIdx;
       bossE.sum = 0;
+      bossE.hist = []; bossE.stuckShown = false; // 必殺で壊した層の式は出さない
       bossE.flash = 0.3;
       S.score += 100;
       spawnParts(bossE.x, bossE.y);
@@ -810,7 +858,9 @@ function step(dt) {
     deadB[bi] = true;
     var en = S.enemies[best];
     en.sum += b.u;
+    (en.hist || (en.hist = [])).push(b.u);
     if (en.boss && en.layerIdx < en.layerKs.length - 1 && en.sum === en.k) {
+      var layerLabel = en.label, layerK = en.k, layerHist = en.hist;
       en.layerIdx++;
       en.k = en.layerKs[en.layerIdx];
       en.label = bossLabelFor(en.k);
@@ -823,6 +873,8 @@ function step(dt) {
       S.special = Math.min(100, S.special + 10);
       spawnParts(en.x, en.y);
       S.pops.push({ x: en.x, y: en.y, text: "層を破壊！ +100", t: 0 });
+      pushFormulaPop(en.x, en.y, layerHist, layerLabel, layerK); // その層に当てた弾で作る
+      en.hist = []; en.stuckShown = false; // 次の層は空から
       showBanner("ボスの層を破壊！ 次は " + en.label.n + "/" + en.label.d);
       sfxDestroy(S.combo);
     } else if (en.sum === en.k) {
@@ -837,6 +889,7 @@ function step(dt) {
       sfxDestroy(S.combo);
       spawnParts(en.x, en.y);
       S.pops.push({ x: en.x, y: en.y, text: "+" + pts, t: 0 });
+      pushFormulaPop(en.x, en.y, en.hist, en.label, en.k);
       if (en.split) spawnSplit(en);
       if (en.boss) {
         S.score += 300;
@@ -854,6 +907,9 @@ function step(dt) {
         }
       }
     } else if (en.sum > en.k) {
+      var over = reducePair(en.sum - en.k, 60); // 0 に戻す前に超過量を計算
+      recordMiss(en, "バースト");
+      en.hist = [];
       en.sum = 0;
       en.flash = 0.3;
       S.combo = 0;
@@ -862,7 +918,7 @@ function step(dt) {
       S.score = Math.max(0, S.score - 30);
       S.shake = Math.max(S.shake, 0.18);
       sfxBurst();
-      S.pops.push({ x: en.x, y: en.y, text: "バースト！", t: 0, bad: true });
+      S.pops.push({ x: en.x, y: en.y - en.r - 10, text: "バースト！ " + fracStr(over.n, over.d) + " オーバー", t: 0, bad: true, life: 1.1 }); // 敵の値を隠さないよう真上に
     } else {
       sfxProgress(en.sum / en.k);
       S.pops.push({ x: en.x, y: en.y - 6, text: "+" + b.n + "/" + b.d, t: 0, small: true });
@@ -890,6 +946,7 @@ function step(dt) {
       S.chain = 0; S.chainT = 0;
       S.shake = 0.3;
       sfxLeak();
+      recordMiss(e, "逃し");
       S.pops.push({ x: Math.max(40, Math.min(W - 40, e.x)), y: H - 60, text: "HP-" + dmg, t: 0, bad: true });
       if (e.boss) { S.phase = "normal"; S.stageKills = Math.max(0, quotaFor(S.stage) - 3); showBanner("ボスに逃げられた…"); }
       if (S.hp <= 0) { S.hp = 0; kept.push(e); gameOver(); }
@@ -899,7 +956,8 @@ function step(dt) {
   S.parts.forEach(function (p) { p.x += p.vx * s; p.y += p.vy * s; p.vy += 300 * s; p.life -= s; });
   S.parts = S.parts.filter(function (p) { return p.life > 0; });
   S.pops.forEach(function (p) { p.t += s; p.y -= 34 * s; });
-  S.pops = S.pops.filter(function (p) { return p.t < 0.85; });
+  S.pops = S.pops.filter(function (p) { return p.t < (p.life || 0.85); });
+  checkNewlyStuck();
   if (S.shake > 0) S.shake -= s;
   if (S.special >= 100) specialFire();
   clearStaleSummonWarn();
@@ -1289,12 +1347,25 @@ function render() {
       ctx.arc(ex, ey, e.r - 4, -Math.PI / 2, -Math.PI / 2 + (e.sum / e.k) * Math.PI * 2);
       ctx.strokeStyle = stuck ? "#ff5b6a" : "#ffd23e";
       ctx.lineWidth = 4;
+      if (stuck) ctx.setLineDash([6, 4]); // 詰みは点線（色だけに頼らない）
       ctx.stroke();
+      ctx.setLineDash([]);
       if (stuck) {
-        ctx.font = "800 15px 'M PLUS 1p', sans-serif";
-        ctx.fillStyle = "#ff5b6a";
+        var bx = ex + e.r * 0.78, by = ey - e.r * 0.62;
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(bx, by, 9, 0, 6.29);
+        ctx.fillStyle = "#e8303f";
+        ctx.fill();
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = "#ffffff";
+        ctx.stroke();
+        ctx.font = "800 12px 'M PLUS 1p', sans-serif";
+        ctx.fillStyle = "#ffffff";
         ctx.textAlign = "center";
-        ctx.fillText("！", ex + e.r * 0.78, ey - e.r * 0.62);
+        ctx.textBaseline = "middle";
+        ctx.fillText("！", bx, by + 1);
+        ctx.restore();
       }
     }
     if (e.sum === 0) {
@@ -1391,11 +1462,14 @@ function render() {
   });
   ctx.globalAlpha = 1;
   S.pops.forEach(function (p) {
-    ctx.globalAlpha = Math.max(0, 1 - p.t / 0.85);
-    ctx.fillStyle = p.bad ? "#ff8fab" : (p.heal ? "#95e07a" : (p.small ? "#a5ffd8" : "#ffd23e"));
-    ctx.font = "800 " + (p.small ? 13 : 17) + "px 'M PLUS 1p', sans-serif";
+    ctx.globalAlpha = Math.max(0, 1 - p.t / (p.life || 0.85));
+    ctx.font = "800 " + (p.formula ? 15 : p.small ? 13 : 17) + "px 'M PLUS 1p', sans-serif";
     ctx.textAlign = "center";
-    ctx.fillText(p.text, p.x, p.y);
+    // 画面端の敵でも文字がはみ出さないよう、文字幅に合わせて x を収める
+    var tw = ctx.measureText(p.text).width, px = Math.max(tw / 2 + 4, Math.min(W - tw / 2 - 4, p.x));
+    if (p.formula || p.bad) { ctx.lineWidth = 4; ctx.strokeStyle = "rgba(12,8,40,.92)"; ctx.lineJoin = "round"; ctx.strokeText(p.text, px, p.y); }
+    ctx.fillStyle = p.formula ? "#ffffff" : p.bad ? "#ff8fab" : (p.heal ? "#95e07a" : (p.small ? "#a5ffd8" : "#ffd23e"));
+    ctx.fillText(p.text, px, p.y);
   });
   ctx.globalAlpha = 1;
   // 自機（コンボ5ごとにパワーアップ）
